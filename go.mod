@@ -1,6 +1,8 @@
 module github.com/greenplum-db/gpbackup
 
-go 1.19
+go 1.21
+
+toolchain go1.24.2
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
@@ -25,6 +27,8 @@ require (
 	gopkg.in/yaml.v2 v2.4.0
 )
 
+replace github.com/greenplum-db/gp-common-go-libs => github.com/warehouse-pg/gp-common-go-libs v1.0.23-0.20250423155224-32bf66ec97c2
+
 require (
 	github.com/fatih/color v1.14.1 // indirect
 	github.com/go-logr/logr v1.2.4 // indirect
@@ -38,7 +42,7 @@ require (
 	github.com/jackc/pgproto3/v2 v2.3.3 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20221227161230-091c0ba34f0a // indirect
 	github.com/jackc/pgtype v1.14.0 // indirect
-	github.com/jackc/pgx/v4 v4.18.2 // indirect
+	github.com/jackc/pgx/v4 v4.18.3 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-runewidth v0.0.13 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
