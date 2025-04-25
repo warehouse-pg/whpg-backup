@@ -157,6 +157,10 @@ func SetMaxCsvLineLengthQuery(connectionPool *dbconn.DBConn) string {
 
 func InitializeBackupConfig() {
 	backupConfig = history.ReadConfigFile(globalFPInfo.GetConfigFilePath())
+
+	// Print backup version (from backup metadata) and restore version (binary version)
+	gplog.Info("Backup Version (from backup config) = %s", backupConfig.BackupVersion)
+	gplog.Info("Restore Version (gprestore binary) = %s", version)
 	utils.InitializePipeThroughParameters(backupConfig.Compressed, backupConfig.CompressionType, 0)
 	report.EnsureBackupVersionCompatibility(backupConfig.BackupVersion, version)
 	report.EnsureDatabaseVersionCompatibility(backupConfig.DatabaseVersion, connectionPool.Version)
@@ -223,7 +227,7 @@ func RecoverMetadataFilesUsingPlugin() {
 		pluginConfig.MustRestoreFile(filename)
 	}
 
-	InitializeBackupConfig()
+	// InitializeBackupConfig()
 
 	var fpInfoList []filepath.FilePathInfo
 	if backupConfig.MetadataOnly {
