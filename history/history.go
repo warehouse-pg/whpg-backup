@@ -291,15 +291,16 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 	// TODO -- consider passing in a tx instead so that aux tables are coherent with main backups
 	// table. Need to confirm this is possible with sqlite. Unclear if we ever pull in and use aux
 	// table info, so it may not be needed.
-	backupQuery := fmt.Sprintf(`
+
+	backupQuery := `
 		SELECT timestamp, backup_dir, backup_version, compressed, compression_type, database_name,
-			database_version, segment_count, data_only, date_deleted, exclude_schema_filtered,
-			exclude_table_filtered, include_schema_filtered, include_table_filtered, incremental,
-			leaf_partition_data, metadata_only, plugin, plugin_version, single_data_file, end_time,
-			without_globals, with_statistics, status
-		FROM backups WHERE timestamp = '%s'`,
-		timestamp)
-	backupRow := historyDB.QueryRow(backupQuery)
+			   database_version, segment_count, data_only, date_deleted, exclude_schema_filtered,
+			   exclude_table_filtered, include_schema_filtered, include_table_filtered, incremental,
+			   leaf_partition_data, metadata_only, plugin, plugin_version, single_data_file, end_time,
+			   without_globals, with_statistics, status
+		FROM backups WHERE timestamp = ?`
+
+	backupRow := historyDB.QueryRow(backupQuery, timestamp)
 
 	var backupConfig BackupConfig
 	var isCompressed int
