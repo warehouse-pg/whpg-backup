@@ -582,6 +582,8 @@ func cancelBlockedQueries(timestamp string) {
 }
 
 func GetVersion() string {
+	version = "1.30.5"
+	gplog.Info("Version (inside get version1) = %s", version)
 	return version
 }
 

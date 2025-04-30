@@ -15,7 +15,7 @@ func main() {
 		Use:     "gpbackup",
 		Short:   "gpbackup is the parallel backup utility for Greenplum",
 		Args:    cobra.NoArgs,
-		Version: GetVersion(),
+		Version: "1.30.5",
 		Run: func(cmd *cobra.Command, args []string) {
 			defer DoTeardown()
 			DoFlagValidation(cmd)

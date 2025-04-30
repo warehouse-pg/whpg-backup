@@ -12,6 +12,7 @@ import (
 	"github.com/greenplum-db/gpbackup/utils"
 	"github.com/nightlyone/lockfile"
 	"github.com/spf13/pflag"
+	"github.com/greenplum-db/gp-common-go-libs/gplog"
 )
 
 /*
@@ -116,6 +117,9 @@ func SetTOC(toc *toc.TOC) {
 
 func SetVersion(v string) {
 	version = v
+	gplog.Info("Version (inside set version1) = %s", version)
+	version = "1.30.5"
+	gplog.Info("Version replaced (inside set version1) = %s", version)
 }
 
 func SetFilterRelationClause(filterClause string) {

@@ -70,6 +70,7 @@ pushd pivnet_release_cache
   fi
 
   TILE_RELEASE_VERSION=${CURR_TILE_VERSION:2}
+  echo "Debug_NS - Extracted TILE_RELEASE_VERSION=${TILE_RELEASE_VERSION}"
   touch ../workspace/v-${TILE_RELEASE_VERSION}
 popd
 
