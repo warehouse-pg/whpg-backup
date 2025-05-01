@@ -394,8 +394,8 @@ func GetBackupConfig(timestamp string, historyDB *sql.DB) (*BackupConfig, error)
 	}
 
 	// Retrieve restore plan information
-	restorePlanQuery := fmt.Sprintf("SELECT DISTINCT restore_plan_timestamp FROM restore_plans WHERE timestamp = '%s' ORDER BY restore_plan_timestamp", timestamp)
-	restorePlanRows, err := historyDB.Query(restorePlanQuery)
+	restorePlanQuery := "SELECT DISTINCT restore_plan_timestamp FROM restore_plans WHERE timestamp = ? ORDER BY restore_plan_timestamp"
+	restorePlanRows, err := historyDB.Query(restorePlanQuery, timestamp)
 	if err != nil {
 		return nil, err
 	}
