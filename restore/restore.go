@@ -95,7 +95,7 @@ func DoSetup() {
 	if MustGetFlagString(options.PLUGIN_CONFIG) != "" {
 		RecoverMetadataFilesUsingPlugin()
 	} else {
-		InitializeBackupConfig()
+		InitializeBackupConfig()   // comes here 2
 	}
 
 	ValidateSafeToResizeCluster()

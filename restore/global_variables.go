@@ -120,11 +120,11 @@ func MustGetFlagStringArray(flagName string) []string {
 }
 
 func GetVersion() string {
-	gplog.Info("Debug_NS: Global Version inside global_variable Restore GetVersion() = %s", version)
+	// gplog.Info("Debug_NS: Global Version inside global_variable Restore GetVersion() = %s", version)
 	return version
 }
 
 func SetVersion(v string) {
-	gplog.Info("Debug_NS: Set version inside global_variables inside Restore part ---> version = %s", v)
+	// gplog.Info("Debug_NS: Set version inside global_variables inside Restore part ---> version = %s", v)
 	version = v
 }

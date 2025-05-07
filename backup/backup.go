@@ -582,7 +582,7 @@ func cancelBlockedQueries(timestamp string) {
 }
 
 func GetVersion() string {
-	gplog.Info("Debug_NS: Backup Version inside GetVersion() = %s", version)
+	//gplog.Info("Debug_NS: Backup Version inside GetVersion() = %s", version)
 	return version
 }
 

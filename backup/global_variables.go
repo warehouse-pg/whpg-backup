@@ -116,7 +116,7 @@ func SetTOC(toc *toc.TOC) {
 }
 
 func SetVersion(v string) {
-	gplog.Info("Debug_NS: Set version inside global_variables inside backup part ---> version = %s", v)
+	// gplog.Info("Debug_NS: Set version inside global_variables inside backup part ---> version = %s", v)
 	version = v
 }
 
