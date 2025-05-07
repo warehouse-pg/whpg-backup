@@ -10,7 +10,9 @@ RESTORE=gprestore
 HELPER=gpbackup_helper
 BIN_DIR=$(shell echo $${GOPATH:-~/go} | awk -F':' '{ print $$1 "/bin"}')
 GINKGO_FLAGS := -r --keep-going --randomize-suites --randomize-all --no-color
-GIT_VERSION := $(shell git describe --tags | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
+#GIT_VERSION := $(shell git describe --tags | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
+GIT_VERSION := $(shell (git describe --tags 2>/dev/null || git rev-parse --short HEAD) | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
+
 ifndef GIT_VERSION
 $(error Make variable GIT_VERSION is not set.  Backup will not work correctly)
 endif
