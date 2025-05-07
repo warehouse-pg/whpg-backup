@@ -156,9 +156,22 @@ func SetMaxCsvLineLengthQuery(connectionPool *dbconn.DBConn) string {
 }
 
 func InitializeBackupConfig() {
+
+	configPath := globalFPInfo.GetConfigFilePath()
+	if configPath == "" {
+		gplog.Info("Debug_NS: Config file path is empty")
+	} else {
+		gplog.Info("Debug_NS: Config file path: = %s", configPath)
+	}
+
 	backupConfig = history.ReadConfigFile(globalFPInfo.GetConfigFilePath())
+
+	gplog.Info("Debug_NS: Backup Version = %s", backupConfig.BackupVersion)
+	gplog.Info("Debug_NS: Restore Version = %s", version)
+	gplog.Info("Greenplum Database Version = %s", connectionPool.Version.VersionString)
+
 	utils.InitializePipeThroughParameters(backupConfig.Compressed, backupConfig.CompressionType, 0)
-	report.EnsureBackupVersionCompatibility(backupConfig.BackupVersion, version)
+	report.EnsureBackupVersionCompatibility(backupConfig.BackupVersion, version)  //comes here 1
 	report.EnsureDatabaseVersionCompatibility(backupConfig.DatabaseVersion, connectionPool.Version)
 }
 

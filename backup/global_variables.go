@@ -12,6 +12,7 @@ import (
 	"github.com/greenplum-db/gpbackup/utils"
 	"github.com/nightlyone/lockfile"
 	"github.com/spf13/pflag"
+	"github.com/greenplum-db/gp-common-go-libs/gplog"
 )
 
 /*
@@ -115,6 +116,7 @@ func SetTOC(toc *toc.TOC) {
 }
 
 func SetVersion(v string) {
+	gplog.Info("Debug_NS: Set version inside global_variables inside backup part ---> version = %s", v)
 	version = v
 }
 
