@@ -145,6 +145,9 @@ func initializeBackupReport(opts options.Options) {
 	if pluginConfig != nil {
 		_, plugin = path.Split(pluginConfig.ExecutablePath)
 	}
+	gplog.Info("Debug_NS: initializeBackupReport() - Connection pool version string = %s", connectionPool.Version.VersionString)
+	gplog.Info("Debug_NS: initializeBackupReport() - version variable = %s", version)
+
 	config := NewBackupConfig(escapedDBName, connectionPool.Version.VersionString, version,
 		plugin, globalFPInfo.Timestamp, opts)
 

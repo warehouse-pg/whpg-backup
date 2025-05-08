@@ -167,6 +167,8 @@ func InitializeBackupConfig() {
 	backupConfig = history.ReadConfigFile(globalFPInfo.GetConfigFilePath())
 
 	gplog.Info("Debug_NS: Backup Version = %s", backupConfig.BackupVersion)
+	gplog.Info("Debug_NS: DatabaseName  = %s", backupConfig.DatabaseName)
+	gplog.Info("Debug_NS: Status = %s", backupConfig.Status)
 	gplog.Info("Debug_NS: Restore Version = %s", version)
 	gplog.Info("Greenplum Database Version = %s", connectionPool.Version.VersionString)
 

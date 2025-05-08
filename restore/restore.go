@@ -52,7 +52,9 @@ func DoValidation(cmd *cobra.Command) {
 // This function handles setup that must be done after parsing flags.
 func DoSetup() {
 	SetLoggerVerbosity()
-	gplog.Verbose("Restore Command: %s", os.Args)
+	gplog.Verbose("Debug_NS: DoSetup() Restore Command: %s", os.Args)
+
+	gplog.Info("Debug_NS: DoSetup() Restore Command: %s", os.Args)
 
 	utils.CheckGpexpandRunning(utils.RestorePreventedByGpexpandMessage)
 	restoreStartTime = history.CurrentTimestamp()

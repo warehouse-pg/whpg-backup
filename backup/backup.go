@@ -44,7 +44,7 @@ func DoFlagValidation(cmd *cobra.Command) {
 func DoSetup() {
 	SetLoggerVerbosity()
 	gplog.Verbose("Backup Command: %s", os.Args)
-	gplog.Info("gpbackup version = %s", GetVersion())
+	gplog.Info("Debug_NS: DoSetup() -  gpbackup version = %s", GetVersion())
 
 	utils.CheckGpexpandRunning(utils.BackupPreventedByGpexpandMessage)
 	timestamp := history.CurrentTimestamp()
