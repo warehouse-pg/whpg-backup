@@ -115,10 +115,12 @@ func SetupTestDBConnSegment(dbname string, port int, host string, gpVersion dbco
 	conn.Tx = make([]*sqlx.Tx, 1)
 	conn.NumConns = 1
 	version, err := dbconn.InitializeVersion(conn)
+	gplog.Info("Debug_NS: 1 SetupTestDBConnSegment() - version variable = %s", version)
 	if err != nil {
 		gplog.FatalOnError(err)
 	}
 	conn.Version = version
+	gplog.Info("Debug_NS: 2 SetupTestDBConnSegment() - version variable = %s", version)
 	return conn
 }
 

@@ -118,6 +118,8 @@ func InitializeGlobals() {
 	verbosity = flag.Int("verbosity", gplog.LOGINFO, "Log file verbosity")
 
 	flag.Parse()
+	gplog.Info("Debug_NS: InitializeGlobals() - version variable = %s", version)
+
 	if *printVersion {
 		fmt.Printf("gpbackup_helper version %s\n", version)
 		os.Exit(0)

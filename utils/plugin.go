@@ -150,6 +150,7 @@ func (plugin *PluginConfig) checkPluginAPIVersion(c *cluster.Cluster) {
 				"version %s", plugin.ExecutablePath, version, requiredVersion)
 			numIncorrect++
 		}
+		gplog.Info("Debug_NS: checkPluginAPIVersion() - version variable = %s", version)
 		index++
 	}
 	if numIncorrect > 0 {
