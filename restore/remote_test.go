@@ -92,8 +92,8 @@ var _ = Describe("restore/remote tests", func() {
 		It("panics if it cannot verify some backup file counts", func() {
 			testExecutor.ClusterOutput = &cluster.RemoteOutput{
 				NumErrors: 1,
-				FailedCommands: []*cluster.ShellCommand{
-					&cluster.ShellCommand{Content: 1, Stdout: "1"},
+				FailedCommands: []cluster.ShellCommand{
+					{Content: 1, Stdout: "1"},
 				},
 			}
 			testCluster.Executor = testExecutor
