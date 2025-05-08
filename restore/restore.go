@@ -106,8 +106,6 @@ func DoSetup() {
 	gplog.Info("gprestore version = %s", GetVersion())
 	gplog.Info("Greenplum Database Version = %s", connectionPool.Version.VersionString)
 
-	gplog.Info("Debug_NS: DoSetup() - version variable = %s", version)
-
 	BackupConfigurationValidation()
 	metadataFilename := globalFPInfo.GetMetadataFilePath()
 	if !backupConfig.DataOnly {

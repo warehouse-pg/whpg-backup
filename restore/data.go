@@ -218,8 +218,6 @@ func restoreDataFromTimestamp(fpInfo filepath.FilePathInfo, dataEntries []toc.Co
 			msg += "resize "
 		}
 		gplog.Verbose("Initializing pipes and gpbackup_helper on segments for %srestore", msg)
-		gplog.Info("Debug_NS: restoreDataFromTimestamp() - version variable = %s", version)
-
 		utils.VerifyHelperVersionOnSegments(version, globalCluster)
 
 		// During a larger-to-smaller restore, we need to do multiple passes of
