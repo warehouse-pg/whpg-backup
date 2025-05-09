@@ -12,8 +12,8 @@ fi
 # Build gpbackup
 pushd ${GOPATH}/src/github.com/greenplum-db/gpbackup
   make depend build unit
-  # version=$(git describe --tags | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
-  version=$( (git describe --tags 2>/dev/null || git rev-parse --short HEAD) | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
+  version=$(git describe --tags | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
+  # version=$( (git describe --tags 2>/dev/null || git rev-parse --short HEAD) | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
 
 popd
 echo "DEBUG_NS: Printing value of version: ${version}"
@@ -28,7 +28,8 @@ fi
 # Build s3 plugin
 pushd ${GOPATH}/src/github.com/greenplum-db/gpbackup-s3-plugin
   make depend build unit
-  s3_plugin_version=$( (git describe --tags 2>/dev/null || git rev-parse --short HEAD) | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
+  s3_plugin_version=$(git describe --tags | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
+#  s3_plugin_version=$( (git describe --tags 2>/dev/null || git rev-parse --short HEAD) | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
 popd
 echo ${s3_plugin_version} > go_components/s3_plugin_version
 
@@ -41,7 +42,8 @@ fi
 # Build gpbackup-manager
 pushd ${GOPATH}/src/github.com/pivotal/gp-backup-manager
   make depend build unit
-  gpbackup_manager_version=$( (git describe --tags 2>/dev/null || git rev-parse --short HEAD) | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
+  gpbackup_manager_version=$(git describe --tags | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
+#  gpbackup_manager_version=$( (git describe --tags 2>/dev/null || git rev-parse --short HEAD) | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
 popd
 echo ${gpbackup_manager_version} > go_components/gpbackup_manager_version
 

@@ -11,7 +11,8 @@ source /usr/local/greenplum-db-devel/greenplum_path.sh
 pushd gpbackup_ddboost_plugin
     source /opt/gcc_env.sh || true
     make build
-    ddboost_plugin_version=$( (git describe --tags 2>/dev/null || git rev-parse --short HEAD) | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
+    ddboost_plugin_version=$(git describe --tags | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
+#    ddboost_plugin_version=$( (git describe --tags 2>/dev/null || git rev-parse --short HEAD) | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
 popd
 
 echo ${ddboost_plugin_version} > ddboost_components/ddboost_plugin_version

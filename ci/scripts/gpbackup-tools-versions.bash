@@ -12,6 +12,7 @@ echo ${GPBACKUP_VERSION} > gpbackup-tools-versions/pkg_version
 
 # get version for ddboost_plugin
 pushd gpbackup_ddboost_plugin
-      DDBOOST_PLUGIN_VERSION=$( (git describe --tags 2>/dev/null || git rev-parse --short HEAD) | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
+      DDBOOST_PLUGIN_VERSION=$(git describe --tags | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
+#      DDBOOST_PLUGIN_VERSION=$( (git describe --tags 2>/dev/null || git rev-parse --short HEAD) | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
 popd
 echo ${DDBOOST_PLUGIN_VERSION} > gpbackup-tools-versions/ddboost_plugin_version
