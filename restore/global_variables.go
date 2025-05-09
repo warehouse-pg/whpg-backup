@@ -11,7 +11,6 @@ import (
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
 	"github.com/spf13/pflag"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
 )
 
 /*
@@ -120,14 +119,9 @@ func MustGetFlagStringArray(flagName string) []string {
 }
 
 func GetVersion() string {
-	version = "1.30.5"
-	gplog.Info("Version (inside get version2) = %s", version)
 	return version
 }
 
 func SetVersion(v string) {
 	version = v
-	gplog.Info("Version (inside set version2) = %s", version)
-	version = "1.30.5"
-	gplog.Info("Version replaced (inside set version2) = %s", version)
 }

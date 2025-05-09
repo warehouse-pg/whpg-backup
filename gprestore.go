@@ -15,7 +15,7 @@ func main() {
 		Use:     "gprestore",
 		Short:   "gprestore is the parallel restore utility for Greenplum",
 		Args:    cobra.NoArgs,
-		Version: "1.30.5",
+		Version: GetVersion(),
 		Run: func(cmd *cobra.Command, args []string) {
 			defer DoTeardown()
 			DoValidation(cmd)

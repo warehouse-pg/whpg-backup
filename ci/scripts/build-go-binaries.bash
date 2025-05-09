@@ -14,11 +14,7 @@ pushd ${GOPATH}/src/github.com/greenplum-db/gpbackup
   make depend build unit
   version=$(git describe --tags | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/')
 popd
-echo "Debug_NS : Writing gpbackup version '${version}' to go_components/gpbackup_version"
 echo ${version} > go_components/gpbackup_version
-
-echo "Debug_NS Expected: gpbackup version ${version}"
-echo "Debug_NS Actual: $(${GOPATH}/bin/gpbackup --version)"
 
 if [[ "gpbackup version ${version}" != "$(${GOPATH}/bin/gpbackup --version)" ]]; then
   echo "unexpected difference in version recorded for gpbackup: expected ${version} to be same as:"
