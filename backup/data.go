@@ -170,7 +170,7 @@ func BackupDataForAllTables(tables []Table) []map[uint32]int64 {
 	}
 
 	/*
-	 * Worker - 0 is a special database connection that
+	 * Worker 0 is a special database connection that
 	 * 	1) Exports the database snapshot if the feature is supported
 	 * 	2) Does not have tables pre-assigned to it.
 	 * 	3) Processes tables only in the event that the other workers encounter locking issues.
