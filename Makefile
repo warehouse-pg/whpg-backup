@@ -16,9 +16,9 @@ GIT_VERSION := $(shell (git describe --tags 2>/dev/null || git rev-parse --short
 ifndef GIT_VERSION
 $(error Make variable GIT_VERSION is not set.  Backup will not work correctly)
 endif
-BACKUP_VERSION_STR=github.com/warehouse-pg/whpg-backup/backup.version=$(GIT_VERSION)
-RESTORE_VERSION_STR=github.com/warehouse-pg/whpg-backup/restore.version=$(GIT_VERSION)
-HELPER_VERSION_STR=github.com/warehouse-pg/whpg-backup/helper.version=$(GIT_VERSION)
+BACKUP_VERSION_STR=github.com/greenplum-db/gpbackup/backup.version=$(GIT_VERSION)
+RESTORE_VERSION_STR=github.com/greenplum-db/gpbackup/restore.version=$(GIT_VERSION)
+HELPER_VERSION_STR=github.com/greenplum-db/gpbackup/helper.version=$(GIT_VERSION)
 
 # note that /testutils is not a production directory, but has unit tests to validate testing tools
 SUBDIRS_HAS_UNIT=backup/ filepath/ history/ helper/ options/ report/ restore/ toc/ utils/ testutils/
