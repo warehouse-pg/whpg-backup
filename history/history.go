@@ -346,7 +346,7 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 }
 
 func getAuxTable(db *sql.DB, timestamp, tableName string) ([]string, error) {
-	getAuxTableQuery := fmt.Sprintf("SELECT name FROM %s WHERE timestamp = ?", tableName) // Only tableName is dynamic
+	getAuxTableQuery := fmt.Sprintf("SELECT name FROM %s WHERE timestamp = ?", tableName)
 	auxTableRows, err := db.Query(getAuxTableQuery, timestamp)
 	if err != nil {
 		return nil, err
