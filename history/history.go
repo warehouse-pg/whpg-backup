@@ -291,15 +291,16 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 	// TODO -- consider passing in a tx instead so that aux tables are coherent with main backups
 	// table. Need to confirm this is possible with sqlite. Unclear if we ever pull in and use aux
 	// table info, so it may not be needed.
-	backupQuery := fmt.Sprintf(`
+
+	backupQuery := `
 		SELECT timestamp, backup_dir, backup_version, compressed, compression_type, database_name,
-			database_version, segment_count, data_only, date_deleted, exclude_schema_filtered,
-			exclude_table_filtered, include_schema_filtered, include_table_filtered, incremental,
-			leaf_partition_data, metadata_only, plugin, plugin_version, single_data_file, end_time,
-			without_globals, with_statistics, status
-		FROM backups WHERE timestamp = '%s'`,
-		timestamp)
-	backupRow := historyDB.QueryRow(backupQuery)
+			   database_version, segment_count, data_only, date_deleted, exclude_schema_filtered,
+			   exclude_table_filtered, include_schema_filtered, include_table_filtered, incremental,
+			   leaf_partition_data, metadata_only, plugin, plugin_version, single_data_file, end_time,
+			   without_globals, with_statistics, status
+		FROM backups WHERE timestamp = ?`
+
+	backupRow := historyDB.QueryRow(backupQuery, timestamp)
 
 	var backupConfig BackupConfig
 	var isCompressed int
@@ -345,8 +346,8 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 }
 
 func getAuxTable(db *sql.DB, timestamp, tableName string) ([]string, error) {
-	getAuxTableQuery := fmt.Sprintf("SELECT name FROM %s WHERE timestamp = '%s'", tableName, timestamp)
-	auxTableRows, err := db.Query(getAuxTableQuery)
+	getAuxTableQuery := fmt.Sprintf("SELECT name FROM %s WHERE timestamp = ?", tableName)
+	auxTableRows, err := db.Query(getAuxTableQuery, timestamp)
 	if err != nil {
 		return nil, err
 	}
@@ -393,8 +394,8 @@ func GetBackupConfig(timestamp string, historyDB *sql.DB) (*BackupConfig, error)
 	}
 
 	// Retrieve restore plan information
-	restorePlanQuery := fmt.Sprintf("SELECT DISTINCT restore_plan_timestamp FROM restore_plans WHERE timestamp = '%s' ORDER BY restore_plan_timestamp", timestamp)
-	restorePlanRows, err := historyDB.Query(restorePlanQuery)
+	restorePlanQuery := "SELECT DISTINCT restore_plan_timestamp FROM restore_plans WHERE timestamp = ? ORDER BY restore_plan_timestamp"
+	restorePlanRows, err := historyDB.Query(restorePlanQuery, timestamp)
 	if err != nil {
 		return nil, err
 	}
@@ -413,8 +414,8 @@ func GetBackupConfig(timestamp string, historyDB *sql.DB) (*BackupConfig, error)
 		}
 		restorePlan.Timestamp = restorePlanTimestamp
 
-		restorePlanTablesQuery := fmt.Sprintf("SELECT table_fqn FROM restore_plan_tables WHERE timestamp = '%s' and restore_plan_timestamp = '%s'", timestamp, restorePlanTimestamp)
-		restorePlanTableRows, err := historyDB.Query(restorePlanTablesQuery)
+		restorePlanTablesQuery := "SELECT table_fqn FROM restore_plan_tables WHERE timestamp = ? AND restore_plan_timestamp = ?"
+		restorePlanTableRows, err := historyDB.Query(restorePlanTablesQuery, timestamp, restorePlanTimestamp)
 		if err != nil {
 			return nil, err
 		}
