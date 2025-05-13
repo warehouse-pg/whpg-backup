@@ -14,10 +14,6 @@ GIT_VERSION := $(shell git describe --tags | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f
 BACKUP_VERSION_STR=github.com/greenplum-db/gpbackup/backup.version=$(GIT_VERSION)
 RESTORE_VERSION_STR=github.com/greenplum-db/gpbackup/restore.version=$(GIT_VERSION)
 HELPER_VERSION_STR=github.com/greenplum-db/gpbackup/helper.version=$(GIT_VERSION)
-GO_VERSION ?= 1.24.0
-GO_INSTALL_DIR ?= /usr/local/go
-
-
 
 # note that /testutils is not a production directory, but has unit tests to validate testing tools
 SUBDIRS_HAS_UNIT=backup/ filepath/ history/ helper/ options/ report/ restore/ toc/ utils/ testutils/
@@ -38,15 +34,7 @@ else
 COPYUTIL=gpsync
 endif
 
-install_go:
-	@echo "Installing Go $(GO_VERSION)..."
-	curl -L "https://golang.org/dl/go$(GO_VERSION).linux-amd64.tar.gz" -o "/tmp/go$(GO_VERSION).linux-amd64.tar.gz"
-	sudo rm -rf $(GO_INSTALL_DIR)
-	sudo tar -C /usr/local -xzf "/tmp/go$(GO_VERSION).linux-amd64.tar.gz"
-	@echo "Go installed at $(GO_INSTALL_DIR)"
-	@/usr/local/go/bin/go version
-
-depend:	install_go
+depend :
 	go mod download
 
 $(GINKGO) :
