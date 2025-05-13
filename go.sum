@@ -101,8 +101,8 @@ github.com/stretchr/testify v1.6.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.8.1 h1:w7B6lhMri9wdJUVmEZPGGhZzrYTPvgJArz7wNPgYKsk=
 github.com/stretchr/testify v1.8.1/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=
-github.com/warehouse-pg/gp-common-go-libs v1.0.23-0.20250424105625-d6dd2bf5fbeb h1:ywjQOhT/eFticozxR1yw7bh58s31I7eEwsPKO4QmeGU=
-github.com/warehouse-pg/gp-common-go-libs v1.0.23-0.20250424105625-d6dd2bf5fbeb/go.mod h1:h0XvCKnuZEc/rr6js/kHEi7aUW2fxXl85R08PeGVEqQ=
+github.com/warehouse-pg/gp-common-go-libs v1.0.23-0.20250514084756-4e13dcbc0d75 h1:7jq7SShj/hDVa2w9GwzOciEEy/LRJMIyD1+YzI3oiBc=
+github.com/warehouse-pg/gp-common-go-libs v1.0.23-0.20250514084756-4e13dcbc0d75/go.mod h1:h0XvCKnuZEc/rr6js/kHEi7aUW2fxXl85R08PeGVEqQ=
 golang.org/x/crypto v0.31.0 h1:ihbySMvVjLAeSH1IbfcRTkD/iNscyz8rGzjF/E5hV6U=
 golang.org/x/crypto v0.31.0/go.mod h1:kDsLvtWBEx7MV9tJOj9bnXsPbxwJQ6csT/x4KIN4Ssk=
 golang.org/x/mod v0.21.0 h1:vvrHzRwRfVKSiLrG+d4FMl/Qi4ukBCE6kZlTUkDYRT0=
