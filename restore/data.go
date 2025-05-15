@@ -16,7 +16,7 @@ import (
 	"github.com/greenplum-db/gpbackup/options"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pkg/errors"
 	"gopkg.in/cheggaaa/pb.v1"
 )
