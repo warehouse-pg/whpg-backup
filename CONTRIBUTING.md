@@ -2,16 +2,16 @@
 
 We warmly welcome and greatly appreciate contributions from the
 community. By participating you agree to the [code of
-conduct](https://github.com/greenplum-db/gpbackup/blob/main/CODE-OF-CONDUCT.md).
-Overall, we follow GPDB's comprehensive contribution policy. Please
-refer to it [here](https://github.com/greenplum-db/gpdb#contributing)
+conduct](https://github.com/warehouse-pg/whpg-backup/blob/main/CODE-OF-CONDUCT.md).
+Overall, we follow WHPG's comprehensive contribution policy. Please
+refer to it [here](https://github.com/warehouse-pg/warehouse-pg/blob/main/CONTRIBUTING.md)
 for details.
 
 ## Getting Started
 
 * Sign our [Contributor License Agreement](https://cla.vmware.com/cla/1/preview)
 * Fork the gpbackup repository on GitHub
-* Run `go get github.com/greenplum-db/gpbackup/...` and add your fork as a remote
+* Run `go get github.com/warehouse-pg/whpg-backup/...` and add your fork as a remote
 * Run `make depend` to install required dependencies
 * Follow the README to set up your environment and run the tests
 
