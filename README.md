@@ -8,29 +8,25 @@ The project requires the Go Programming language version 1.23 or higher. Follow 
 The project also has a dependency on `sqlite3`. This is installed by default on many platforms, but you must install it on your system if it is not present.
 
 ## Downloading
-
+Clone the repository:
 ```bash
-go get github.com/warehouse-pg/whpg-backup/...
+git clone https://github.com/warehouse-pg/whpg-backup.git
+cd whpg-backup
 ```
 
-This will place the code in `$GOPATH/github.com/warehouse-pg/whpg-backup`.
+## Building binaries
 
-## Building and installing binaries
-
-Make the `gpbackup` directory your current working directory and run:
+Make the `whpg-backup` directory your current working directory and run:
 
 ```bash
 make depend
 make build
 ```
 
-The `build` target will put the `gpbackup` and `gprestore` binaries in `$HOME/go/bin`.
-
-This will also attempt to copy `gpbackup_helper` to the WarehousePG segments (retrieving hostnames from `gp_segment_configuration`). Pay attention to the output as it will indicate whether this operation was successful.
+The `build` target will compile the `gpbackup`, `gprestore`, and `gpbackup_helper ` binaries.
 
 `make build_linux` is for cross compiling on macOS, and the target is Linux.
 
-`make install` will scp the `gpbackup_helper` binary (used with -single-data-file flag) to all hosts
 
 ## Validation and code quality
 

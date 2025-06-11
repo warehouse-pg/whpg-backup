@@ -57,6 +57,6 @@ the intent of your change.
 
 ## Community
 
-Connect with Greenplum on:
-* [Slack](https://greenplum.slack.com/)
-* [Dev Google Group mailing list](https://groups.google.com/a/greenplum.org/forum/#!forum/gpdb-dev/join)
+Connect with WarehousePG on:
+* Slack
+* Dev Google Group mailing list 
