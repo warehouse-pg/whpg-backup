@@ -23,7 +23,7 @@ make depend
 make build
 ```
 
-The `build` target will compile the `gpbackup`, `gprestore`, and `gpbackup_helper ` binaries.
+The `build` target will compile the `gpbackup`, `gprestore`, and `gpbackup_helper ` binaries and places them in `$HOME/go/bin`.
 
 `make build_linux` is for cross compiling on macOS, and the target is Linux.
 
