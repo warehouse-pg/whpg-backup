@@ -9,9 +9,8 @@ for details.
 
 ## Getting Started
 
-* Sign our [Contributor License Agreement](https://cla.vmware.com/cla/1/preview)
-* Fork the gpbackup repository on GitHub
-* Run `go get github.com/warehouse-pg/whpg-backup/...` and add your fork as a remote
+* Fork the `whpg-backup` repository on GitHub
+* Clone the forked repository
 * Run `make depend` to install required dependencies
 * Follow the README to set up your environment and run the tests
 
@@ -54,9 +53,3 @@ Your contribution will be analyzed for product fit and engineering
 quality prior to merging. Your pull request is much more likely to be
 accepted if it is small and focused with a clear message that conveys
 the intent of your change.
-
-## Community
-
-Connect with Greenplum on:
-* [Slack](https://greenplum.slack.com/)
-* [Dev Google Group mailing list](https://groups.google.com/a/greenplum.org/forum/#!forum/gpdb-dev/join)
