@@ -367,6 +367,14 @@ func GetAccessMethods(connectionPool *dbconn.DBConn) []AccessMethod {
        amtype AS type
 	FROM pg_am
 	WHERE oid > %d
+	AND NOT EXISTS
+	(
+		SELECT 1
+		FROM pg_depend d
+		WHERE d.objid = pg_am.oid
+		AND d.classid = 'pg_am'::regclass
+		AND d.deptype = 'e'
+	)
 	ORDER BY oid;`, FIRST_NORMAL_OBJECT_ID)
 
 	err := connectionPool.Select(&results, query)
