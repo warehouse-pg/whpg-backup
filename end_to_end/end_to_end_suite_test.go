@@ -1902,6 +1902,25 @@ LANGUAGE plpgsql NO SQL;`)
 					"public.test_depends_on_function": 2})
 				assertArtifactsCleaned(timestamp)
 			})
+			It("runs gpbackup and gprestore to backup tables depending on extension with access methods", func() {
+				testutils.SkipIfBefore7(backupConn)
+				testhelper.AssertQueryRuns(backupConn, "CREATE EXTENSION IF NOT EXISTS test_backup;")
+				defer testhelper.AssertQueryRuns(backupConn, "DROP EXTENSION test_backup;")
+
+				output := gpbackup(gpbackupPath, backupHelperPath)
+				timestamp := getBackupTimestamp(string(output))
+
+				gprestore(gprestorePath, restoreHelperPath, timestamp,
+					"--redirect-db", "restoredb")
+
+				assertRelationsCreated(restoreConn, TOTAL_RELATIONS)
+				assertDataRestored(restoreConn, schema2TupleCounts)
+				assertDataRestored(restoreConn, map[string]int{
+					"public.foo":   40000,
+					"public.holds": 50000,
+					"public.sales": 13})
+				assertArtifactsCleaned(timestamp)
+			})
 			It("runs gpbackup and gprestore to backup functions depending on tables", func() {
 				skipIfOldBackupVersionBefore("1.19.0")
 
