@@ -348,5 +348,16 @@ PARTITION BY RANGE (date)
 			structmatcher.ExpectStructsToMatchExcluding(&accessMethodIndex, &accessMethods[1], "Oid")
 
 		})
+		It("excludes access methods created by extension", func() {
+			testutils.SkipIfBefore7(connectionPool)
+
+			testhelper.AssertQueryRuns(connectionPool, "CREATE EXTENSION IF NOT EXISTS vector;")
+			defer testhelper.AssertQueryRuns(connectionPool, "DROP EXTENSION vector;")
+
+			accessMethods := backup.GetAccessMethods(connectionPool)
+			// The vector extension creates a table access method named "ivfflat"
+			// We expect it to be excluded from the results.
+			Expect(accessMethods).To(HaveLen(0))
+		})
 	})
 })

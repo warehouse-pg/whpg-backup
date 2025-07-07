@@ -1902,6 +1902,30 @@ LANGUAGE plpgsql NO SQL;`)
 					"public.test_depends_on_function": 2})
 				assertArtifactsCleaned(timestamp)
 			})
+			It("runs gpbackup and gprestore to backup tables depending on extension with access methods", func() {
+				testutils.SkipIfBefore7(backupConn)
+				testhelper.AssertQueryRuns(backupConn, "CREATE EXTENSION IF NOT EXISTS vector;")
+				defer testhelper.AssertQueryRuns(backupConn, "DROP EXTENSION vector;")
+
+				testhelper.AssertQueryRuns(backupConn, "CREATE TABLE test_depends_on_extension (id int, name text,embedding vector(3)) DISTRIBUTED BY (id);")
+				defer testhelper.AssertQueryRuns(backupConn, "DROP TABLE test_depends_on_extension;")
+				testhelper.AssertQueryRuns(backupConn, "INSERT INTO test_depends_on_extension (id, name, embedding)SELECT i, 'name_' || i, ARRAY[i, i+1, i+2]::vector FROM generate_series(1, 50) AS s(i);")
+
+				output := gpbackup(gpbackupPath, backupHelperPath)
+				timestamp := getBackupTimestamp(string(output))
+
+				gprestore(gprestorePath, restoreHelperPath, timestamp,
+					"--redirect-db", "restoredb")
+
+				assertRelationsCreated(restoreConn, TOTAL_RELATIONS+1) // for new table
+				assertDataRestored(restoreConn, schema2TupleCounts)
+				assertDataRestored(restoreConn, map[string]int{
+					"public.foo":                       40000,
+					"public.holds":                     50000,
+					"public.sales":                     13,
+					"public.test_depends_on_extension": 50})
+				assertArtifactsCleaned(timestamp)
+			})
 			It("runs gpbackup and gprestore to backup functions depending on tables", func() {
 				skipIfOldBackupVersionBefore("1.19.0")
 
