@@ -67,14 +67,14 @@ unit_all_gpdb_versions : $(GINKGO)
 		TEST_GPDB_VERSION=6.999.0 ginkgo $(GINKGO_FLAGS) $(SUBDIRS_HAS_UNIT) 2>&1
 		TEST_GPDB_VERSION=7.999.0 ginkgo $(GINKGO_FLAGS) $(SUBDIRS_HAS_UNIT) 2>&1 # GPDB main
 
-integration : $(GINKGO)
+integration : build_test $(GINKGO)
 	ginkgo $(GINKGO_FLAGS) integration 2>&1
 
 build_test:
 	# build and install test_extension in testutils
 	make -C testutils/test_extension install
 
-test : build build_test unit integration
+test : build unit integration
 
 end_to_end : build_test $(GINKGO)
 	ginkgo $(GINKGO_FLAGS) --timeout=3h --poll-progress-after=0s end_to_end -- --custom_backup_dir $(CUSTOM_BACKUP_DIR) 2>&1
