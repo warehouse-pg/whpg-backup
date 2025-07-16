@@ -301,7 +301,7 @@ var _ = Describe("restore/validate tests", func() {
 					Use:  "flag validation",
 					Args: cobra.NoArgs,
 					Run: func(cmd *cobra.Command, args []string) {
-						restore.ValidateFlagCombinations(cmd.Flags())
+						restore.ValidateFlagCombinations(cmd)
 					}}
 				testCmd.SetArgs(strings.Split(argString, " "))
 				restore.SetCmdFlags(testCmd.Flags())

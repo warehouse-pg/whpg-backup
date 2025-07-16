@@ -38,7 +38,7 @@ func DoInit(cmd *cobra.Command) {
 * It should only validate; initialization with any sort of side effects should go in DoInit or DoSetup.
  */
 func DoValidation(cmd *cobra.Command) {
-	ValidateFlagCombinations(cmd.Flags())
+	ValidateFlagCombinations(cmd)
 	err := utils.ValidateFullPath(MustGetFlagString(options.BACKUP_DIR))
 	gplog.FatalOnError(err)
 	err = utils.ValidateFullPath(MustGetFlagString(options.PLUGIN_CONFIG))

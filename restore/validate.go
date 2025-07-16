@@ -11,7 +11,8 @@ import (
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
 	"github.com/pkg/errors"
-	"github.com/spf13/pflag"
+
+	"github.com/spf13/cobra"
 )
 
 /*
@@ -252,7 +253,8 @@ func validateBackupFlagPluginCombinations() {
 	}
 }
 
-func ValidateFlagCombinations(flags *pflag.FlagSet) {
+func ValidateFlagCombinations(cmd *cobra.Command) {
+	flags := cmd.Flags()
 	options.CheckExclusiveFlags(flags, options.DATA_ONLY, options.WITH_GLOBALS)
 	options.CheckExclusiveFlags(flags, options.DATA_ONLY, options.CREATE_DB)
 	options.CheckExclusiveFlags(flags, options.DEBUG, options.QUIET, options.VERBOSE)
@@ -287,6 +289,7 @@ func ValidateFlagCombinations(flags *pflag.FlagSet) {
 		gplog.Fatal(errors.Errorf("Cannot use --incremental without --data-only"), "")
 	}
 	if !flags.Changed(options.TIMESTAMP) && !flags.Changed(options.BACKUP_DIR) {
+		_ = cmd.Help()
 		gplog.Fatal(errors.Errorf("Must provide --backup-dir if --timestamp is not provided"), "")
 	}
 	options.CheckExclusiveFlags(flags, options.RUN_ANALYZE, options.WITH_STATS)
