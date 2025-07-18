@@ -11,7 +11,6 @@ import (
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
 	"github.com/pkg/errors"
-
 	"github.com/spf13/cobra"
 )
 
