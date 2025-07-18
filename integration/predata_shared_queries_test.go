@@ -350,6 +350,7 @@ PARTITION BY RANGE (date)
 		})
 		It("excludes access methods created by extension", func() {
 			testutils.SkipIfBefore7(connectionPool)
+			testutils.SkipIfNoPgvector(connectionPool)
 
 			testhelper.AssertQueryRuns(connectionPool, "CREATE EXTENSION IF NOT EXISTS vector;")
 			defer testhelper.AssertQueryRuns(connectionPool, "DROP EXTENSION vector;")

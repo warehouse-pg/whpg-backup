@@ -1904,6 +1904,7 @@ LANGUAGE plpgsql NO SQL;`)
 			})
 			It("runs gpbackup and gprestore to backup tables depending on extension with access methods", func() {
 				testutils.SkipIfBefore7(backupConn)
+				testutils.SkipIfNoPgvector(backupConn)
 				testhelper.AssertQueryRuns(backupConn, "CREATE EXTENSION IF NOT EXISTS vector;")
 				defer testhelper.AssertQueryRuns(backupConn, "DROP EXTENSION vector;")
 

@@ -542,6 +542,13 @@ func SkipIfBefore7(connectionPool *dbconn.DBConn) {
 	}
 }
 
+func SkipIfNoPgvector(connectionPool *dbconn.DBConn) {
+	_, err := connectionPool.Exec("CREATE EXTENSION IF NOT EXISTS vector;")
+	if err != nil {
+		Skip("Test only applicable to GPDB versions with pgvector")
+	}
+}
+
 func InitializeTestTOC(buffer io.Writer, which string) (*toc.TOC, *utils.FileWithByteCount) {
 	tocfile := &toc.TOC{}
 	tocfile.InitializeMetadataEntryMap()
