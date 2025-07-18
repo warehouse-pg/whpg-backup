@@ -70,9 +70,13 @@ unit_all_gpdb_versions : $(GINKGO)
 integration : $(GINKGO)
 	ginkgo $(GINKGO_FLAGS) integration 2>&1
 
-test : build unit integration
+build_test:
+	# build and install test_extension in testutils
+	make -C testutils/test_extension install
 
-end_to_end : $(GINKGO)
+test : build build_test unit integration
+
+end_to_end : build_test $(GINKGO)
 	ginkgo $(GINKGO_FLAGS) --timeout=3h --poll-progress-after=0s end_to_end -- --custom_backup_dir $(CUSTOM_BACKUP_DIR) 2>&1
 
 coverage :
