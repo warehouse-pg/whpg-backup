@@ -1951,6 +1951,43 @@ LANGUAGE plpgsql NO SQL;`)
 				gprestore(gprestorePath, restoreHelperPath, timestamp,
 					"--redirect-db", "document_db")
 			})
+			It("Back up and restores a table with pgvector", func() {
+				testutils.SkipIfBefore7(backupConn)
+
+				// Skip test if vector extension is not installed
+				extensionCheck := dbconn.MustSelectString(backupConn, `
+					SELECT count(*) AS string
+					FROM pg_available_extensions
+					WHERE name = 'vector';
+				`)
+				if extensionCheck != "1" {
+					Skip("Skipping test because 'vector' extension is not available")
+				}
+
+				// Create table using pgvector extension
+				testhelper.AssertQueryRuns(backupConn, "CREATE EXTENSION IF NOT EXISTS vector;")
+				defer testhelper.AssertQueryRuns(backupConn, "DROP EXTENSION vector;")
+
+				testhelper.AssertQueryRuns(backupConn, "CREATE TABLE vectortable (id int, embedding vector(3)) DISTRIBUTED BY (id);")
+				defer testhelper.AssertQueryRuns(backupConn, "DROP TABLE vectortable;")
+				testhelper.AssertQueryRuns(backupConn, "INSERT INTO vectortable VALUES (1, '[1,2,3]'), (2, '[4,5,6]');")
+
+				// Take backup
+				output := gpbackup(gpbackupPath, backupHelperPath)
+				timestamp := getBackupTimestamp(string(output))
+
+				// Restore table
+				gprestore(gprestorePath, restoreHelperPath, timestamp,
+					"--redirect-db", "restoredb")
+
+				// Check table is restored
+				assertRelationsCreated(restoreConn, TOTAL_RELATIONS+1)
+
+				// Check the data
+				count := dbconn.MustSelectString(restoreConn,
+					"SELECT count(*) AS string FROM vectortable")
+				Expect(count).To(Equal("2"))
+			})
 			It("does not hold lock on gp_segment_configuration when backup is in progress", func() {
 				if useOldBackupVersion {
 					Skip("This test is not needed for old backup versions")
