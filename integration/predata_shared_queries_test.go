@@ -348,5 +348,16 @@ PARTITION BY RANGE (date)
 			structmatcher.ExpectStructsToMatchExcluding(&accessMethodIndex, &accessMethods[1], "Oid")
 
 		})
+		It("excludes access methods created by extension", func() {
+			testutils.SkipIfBefore7(connectionPool)
+
+			testhelper.AssertQueryRuns(connectionPool, "CREATE EXTENSION IF NOT EXISTS test_backup;")
+			defer testhelper.AssertQueryRuns(connectionPool, "DROP EXTENSION test_backup;")
+
+			accessMethods := backup.GetAccessMethods(connectionPool)
+			// The test_backup extension creates a table access method named "backup_test_am"
+			// We expect it to be excluded from the results.
+			Expect(accessMethods).To(HaveLen(0))
+		})
 	})
 })

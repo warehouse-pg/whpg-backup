@@ -1,0 +1,1 @@
+CREATE ACCESS METHOD backup_test_am TYPE INDEX HANDLER bthandler;
