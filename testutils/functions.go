@@ -281,7 +281,7 @@ func DefaultACLForType(grantee string, objType string) backup.ACL {
 		References: objType == toc.OBJ_TABLE || objType == toc.OBJ_VIEW || objType == toc.OBJ_FOREIGN_TABLE || objType == toc.OBJ_MATERIALIZED_VIEW,
 		Trigger:    objType == toc.OBJ_TABLE || objType == toc.OBJ_VIEW || objType == toc.OBJ_FOREIGN_TABLE || objType == toc.OBJ_MATERIALIZED_VIEW,
 		Usage:      objType == toc.OBJ_LANGUAGE || objType == toc.OBJ_SCHEMA || objType == toc.OBJ_SEQUENCE || objType == toc.OBJ_FOREIGN_DATA_WRAPPER || objType == toc.OBJ_FOREIGN_SERVER,
-		Execute:    objType == toc.OBJ_FUNCTION || objType == toc.OBJ_AGGREGATE,
+		Execute:    objType == toc.OBJ_FUNCTION || objType == toc.OBJ_AGGREGATE || objType == toc.OBJ_PROCEDURE,
 		Create:     objType == toc.OBJ_DATABASE || objType == toc.OBJ_SCHEMA || objType == toc.OBJ_TABLESPACE,
 		Temporary:  objType == toc.OBJ_DATABASE,
 		Connect:    objType == toc.OBJ_DATABASE,

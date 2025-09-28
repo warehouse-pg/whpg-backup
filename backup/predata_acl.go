@@ -106,10 +106,10 @@ func PrintObjectMetadata(metadataFile *utils.FileWithByteCount, objToc *toc.TOC,
 	if owner := metadata.GetOwnerStatement(obj.FQN(), objectType); owner != "" {
 		statements = append(statements, strings.TrimSpace(owner))
 	}
-	if privileges := metadata.GetPrivilegesStatements(obj.FQN(), entry.ObjectType); privileges != "" {
+	if privileges := metadata.GetPrivilegesStatements(obj.FQN(), objectType); privileges != "" {
 		statements = append(statements, strings.TrimSpace(privileges))
 	}
-	if securityLabel := metadata.GetSecurityLabelStatement(obj.FQN(), entry.ObjectType); securityLabel != "" {
+	if securityLabel := metadata.GetSecurityLabelStatement(obj.FQN(), objectType); securityLabel != "" {
 		statements = append(statements, strings.TrimSpace(securityLabel))
 	}
 	PrintStatements(metadataFile, objToc, obj, statements, tier)
@@ -297,7 +297,10 @@ func (obj ObjectMetadata) GetPrivilegesStatements(objectName string, objectType 
 		typeStr = "TABLE "
 	} else if objectType == toc.OBJ_AGGREGATE {
 		typeStr = "FUNCTION "
+	} else if objectType == toc.OBJ_PROCEDURE {
+		typeStr = "PROCEDURE "
 	}
+
 	columnStr := ""
 	if len(columnName) == 1 {
 		columnStr = fmt.Sprintf("(%s) ", columnName[0])
@@ -356,7 +359,7 @@ func createPrivilegeStrings(acl ACL, objectType string) (string, string) {
 		hasAllPrivileges = acl.Select && acl.Insert && acl.Update && acl.Delete && acl.References && acl.Trigger
 		hasAllPrivilegesWithGrant = acl.SelectWithGrant && acl.InsertWithGrant && acl.UpdateWithGrant && acl.DeleteWithGrant &&
 			acl.ReferencesWithGrant && acl.TriggerWithGrant
-	case toc.OBJ_FUNCTION:
+	case toc.OBJ_FUNCTION, toc.OBJ_AGGREGATE, toc.OBJ_PROCEDURE:
 		hasAllPrivileges = acl.Execute
 		hasAllPrivilegesWithGrant = acl.ExecuteWithGrant
 	case toc.OBJ_LANGUAGE:
@@ -381,9 +384,6 @@ func createPrivilegeStrings(acl ACL, objectType string) (string, string) {
 	case toc.OBJ_TYPE:
 		hasAllPrivileges = acl.Usage
 		hasAllPrivilegesWithGrant = acl.UsageWithGrant
-	case toc.OBJ_AGGREGATE:
-		hasAllPrivileges = acl.Execute
-		hasAllPrivilegesWithGrant = acl.ExecuteWithGrant
 	}
 	if hasAllPrivileges {
 		privStr = "ALL"
