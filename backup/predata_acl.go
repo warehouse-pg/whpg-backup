@@ -297,8 +297,6 @@ func (obj ObjectMetadata) GetPrivilegesStatements(objectName string, objectType 
 		typeStr = "TABLE "
 	} else if objectType == toc.OBJ_AGGREGATE {
 		typeStr = "FUNCTION "
-	} else if objectType == toc.OBJ_PROCEDURE {
-		typeStr = "PROCEDURE "
 	}
 
 	columnStr := ""

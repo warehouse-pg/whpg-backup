@@ -299,7 +299,7 @@ func DefaultACLForTypeWithGrant(grantee string, objType string) backup.ACL {
 		ReferencesWithGrant: objType == toc.OBJ_TABLE || objType == toc.OBJ_VIEW || objType == toc.OBJ_MATERIALIZED_VIEW,
 		TriggerWithGrant:    objType == toc.OBJ_TABLE || objType == toc.OBJ_VIEW || objType == toc.OBJ_MATERIALIZED_VIEW,
 		UsageWithGrant:      objType == toc.OBJ_LANGUAGE || objType == toc.OBJ_SCHEMA || objType == toc.OBJ_SEQUENCE || objType == toc.OBJ_FOREIGN_DATA_WRAPPER || objType == toc.OBJ_FOREIGN_SERVER,
-		ExecuteWithGrant:    objType == toc.OBJ_FUNCTION,
+		ExecuteWithGrant:    objType == toc.OBJ_FUNCTION || objType == toc.OBJ_PROCEDURE,
 		CreateWithGrant:     objType == toc.OBJ_DATABASE || objType == toc.OBJ_SCHEMA || objType == toc.OBJ_TABLESPACE,
 		TemporaryWithGrant:  objType == toc.OBJ_DATABASE,
 		ConnectWithGrant:    objType == toc.OBJ_DATABASE,

@@ -186,6 +186,29 @@ REVOKE ALL ON PROCEDURE public.myproc() FROM PUBLIC;
 REVOKE ALL ON PROCEDURE public.myproc() FROM testrole;
 GRANT ALL ON PROCEDURE public.myproc() TO testrole;`)
 		})
+		It("prints PROCEDURE for GRANT/REVOKE block for a procedure with grant option", func() {
+			testutils.SkipIfBefore7(connectionPool)
+			proc := backup.Function{
+				Schema:    "public",
+				Name:      "myproc",
+				Kind:      "p",
+				Arguments: sql.NullString{String: "", Valid: true},
+				IdentArgs: sql.NullString{String: "", Valid: true},
+			}
+			priv := testutils.DefaultACLForTypeWithGrant("testrole", toc.OBJ_PROCEDURE)
+			metadata := backup.ObjectMetadata{
+				Privileges: []backup.ACL{priv},
+				Owner:      "testrole",
+			}
+			backup.PrintObjectMetadata(backupfile, tocfile, metadata, proc, "", []uint32{0, 0})
+			testhelper.ExpectRegexp(buffer, `
+ALTER PROCEDURE public.myproc() OWNER TO testrole;
+
+
+REVOKE ALL ON PROCEDURE public.myproc() FROM PUBLIC;
+REVOKE ALL ON PROCEDURE public.myproc() FROM testrole;
+GRANT ALL ON PROCEDURE public.myproc() TO testrole WITH GRANT OPTION;`)
+		})
 		It("prints TABLE for a block of REVOKE and GRANT statements for a foreign table", func() {
 			table := backup.Table{Relation: backup.Relation{Schema: "public", Name: "foreigntablename"}}
 			foreignDef := backup.ForeignTableDefinition{Oid: 23, Options: "", Server: "fs"}
