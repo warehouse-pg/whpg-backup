@@ -434,17 +434,22 @@ func PrintAlterSequenceStatements(metadataFile *utils.FileWithByteCount,
 // A view's column names are automatically factored into it's definition.
 func PrintCreateViewStatement(metadataFile *utils.FileWithByteCount, objToc *toc.TOC, view View, viewMetadata ObjectMetadata) {
 	start := metadataFile.ByteCount
-	var tablespaceClause string
+	var tablespaceClause, usingClause string
 	if view.Tablespace != "" {
 		tablespaceClause = fmt.Sprintf(" TABLESPACE %s", view.Tablespace)
 	}
+
+	if view.AccessMethod != "" {
+		usingClause = fmt.Sprintf(" USING %s", view.AccessMethod)
+	}
+
 	// Option's keyword WITH is expected to be prepended to its options in the SQL statement
 	// Remove trailing ';' at the end of materialized view's definition
 	if !view.IsMaterialized {
 		metadataFile.MustPrintf("\n\nCREATE VIEW %s%s AS %s\n", view.FQN(), view.Options, view.Definition.String)
 	} else {
-		metadataFile.MustPrintf("\n\nCREATE MATERIALIZED VIEW %s%s%s AS %s\nWITH NO DATA\n%s;\n",
-			view.FQN(), view.Options, tablespaceClause, view.Definition.String[:len(view.Definition.String)-1], view.DistPolicy.Policy)
+		metadataFile.MustPrintf("\n\nCREATE MATERIALIZED VIEW %s%s%s%s AS %s\nWITH NO DATA\n%s;\n",
+			view.FQN(), usingClause, view.Options, tablespaceClause, view.Definition.String[:len(view.Definition.String)-1], view.DistPolicy.Policy)
 	}
 	section, entry := view.GetMetadataEntry()
 	tier := globalTierMap[view.GetUniqueID()]
