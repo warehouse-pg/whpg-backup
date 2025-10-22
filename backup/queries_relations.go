@@ -422,7 +422,7 @@ func GetAllViews(connectionPool *dbconn.DBConn) []View {
 		coalesce(' WITH (' || array_to_string(c.reloptions, ', ') || ')', '') AS options,
 		coalesce(quote_ident(t.spcname), '') AS tablespace,
 		c.relkind='m' AS ismaterialized,
-		a.amname AS accessmethod
+		coalesce(a.amname, '') AS accessmethod
 	FROM pg_class c
 		LEFT JOIN pg_namespace n ON n.oid = c.relnamespace
 		LEFT JOIN pg_tablespace t ON t.oid = c.reltablespace
