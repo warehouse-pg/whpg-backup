@@ -134,7 +134,7 @@ func AppendExtPartSuffix(name string) string {
 func PrintCreateTableStatement(metadataFile *utils.FileWithByteCount, objToc *toc.TOC, table Table, tableMetadata ObjectMetadata) {
 	start := metadataFile.ByteCount
 	// We use an empty TOC below to keep count of the bytes for testing purposes.
-	if table.IsExternal && table.PartitionLevelInfo.Level != "p" {
+	if table.IsExternal && table.ForeignDef == (ForeignTableDefinition{}) && table.PartitionLevelInfo.Level != "p" {
 		PrintExternalTableCreateStatement(metadataFile, nil, table)
 	} else {
 		PrintRegularTableCreateStatement(metadataFile, nil, table)
