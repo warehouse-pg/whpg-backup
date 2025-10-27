@@ -354,6 +354,7 @@ type View struct {
 	DistPolicy     DistPolicy
 	NeedsDummy     bool
 	ColumnDefs     []ColumnDefinition
+	AccessMethod   string
 }
 
 func (v View) GetMetadataEntry() (string, toc.MetadataEntry) {
@@ -420,10 +421,12 @@ func GetAllViews(connectionPool *dbconn.DBConn) []View {
 		pg_get_viewdef(c.oid) AS definition,
 		coalesce(' WITH (' || array_to_string(c.reloptions, ', ') || ')', '') AS options,
 		coalesce(quote_ident(t.spcname), '') AS tablespace,
-		c.relkind='m' AS ismaterialized
+		c.relkind='m' AS ismaterialized,
+		coalesce(a.amname, '') AS accessmethod
 	FROM pg_class c
 		LEFT JOIN pg_namespace n ON n.oid = c.relnamespace
 		LEFT JOIN pg_tablespace t ON t.oid = c.reltablespace
+		LEFT JOIN pg_am a ON c.relam = a.oid
 	WHERE c.relkind IN ('m', 'v')
 		AND %s
 		AND %s`, relationAndSchemaFilterClause(), ExtensionFilterClause("c"))

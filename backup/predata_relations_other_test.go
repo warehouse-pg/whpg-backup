@@ -662,6 +662,29 @@ GRANT ALL ON TABLE schema1.mview1 TO testrole;`}
 WITH NO DATA
 DISTRIBUTED BY (tablename);`)
 		})
+		It("can print a materialized view with an access method of ao_row", func() {
+			mview.AccessMethod = "ao_row"
+
+			backup.PrintCreateViewStatement(backupfile, tocfile, mview, emptyMetadata)
+
+			testutils.ExpectEntry(tocfile.PredataEntries, 0, "schema1", "", "mview1", toc.OBJ_MATERIALIZED_VIEW)
+			testutils.AssertBufferContents(tocfile.PredataEntries, buffer,
+				`CREATE MATERIALIZED VIEW schema1.mview1 USING ao_row AS SELECT count(*) FROM pg_tables
+WITH NO DATA
+DISTRIBUTED BY (tablename);`)
+		})
+		It("can print a materialized view with an access method", func() {
+			mview.AccessMethod = "ao_column"
+
+			backup.PrintCreateViewStatement(backupfile, tocfile, mview, emptyMetadata)
+
+			testutils.ExpectEntry(tocfile.PredataEntries, 0, "schema1", "", "mview1", toc.OBJ_MATERIALIZED_VIEW)
+			testutils.AssertBufferContents(tocfile.PredataEntries, buffer,
+				`CREATE MATERIALIZED VIEW schema1.mview1 USING ao_column AS SELECT count(*) FROM pg_tables
+WITH NO DATA
+DISTRIBUTED BY (tablename);`)
+		})
+
 	})
 	Describe("PrintCreateDummyViewStatement", func() {
 		var emptyMetadata backup.ObjectMetadata
