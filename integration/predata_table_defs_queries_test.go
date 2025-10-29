@@ -747,6 +747,19 @@ SET SUBPARTITION TEMPLATE
 			result := backup.GetForeignTableDefinitions(connectionPool)
 			Expect(result).To(BeEmpty())
 		})
+		It("Returns a map when an external table exists", func() {
+			testutils.SkipIfBefore6(connectionPool)
+			testhelper.AssertQueryRuns(connectionPool, `CREATE READABLE EXTERNAL TABLE public.ext_table(i int)
+LOCATION ('gpfdist://tmp/myfile.txt')
+FORMAT 'TEXT'`)
+			defer testhelper.AssertQueryRuns(connectionPool, "DROP EXTERNAL TABLE public.ext_table")
+
+			oid := testutils.OidFromObjectName(connectionPool, "public", "ext_table", backup.TYPE_RELATION)
+			result := backup.GetForeignTableDefinitions(connectionPool)
+			expectedResult := backup.ForeignTableDefinition{Oid: oid, Options: "delimiter '\t',    encoding 'UTF8',    escape E'\\\\',    execute_on 'ALL_SEGMENTS',    format 'text',    is_writable 'false',    location_uris 'gpfdist://tmp:8080/myfile.txt',    log_errors 'disable',    \"null\" E'\\\\N'", Server: "gp_exttable_server"}
+			Expect(result).To(HaveLen(1))
+			Expect(result[oid]).To(Equal(expectedResult))
+		})
 		AfterAll(func() {
 			testhelper.AssertQueryRuns(connectionPool, "CREATE EXTENSION gp_toolkit;")
 		})
