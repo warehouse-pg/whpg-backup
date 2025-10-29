@@ -718,7 +718,10 @@ SET SUBPARTITION TEMPLATE
 		})
 	})
 
-	Describe("GetForeignTableDefinitions", func() {
+	Describe("GetForeignTableDefinitions", Ordered, Serial, func() {
+		BeforeAll(func() {
+			testhelper.AssertQueryRuns(connectionPool, "DROP EXTENSION IF EXISTS gp_toolkit;")
+		})
 		It("Returns a map when a FOREIGN table exists", func() {
 			testutils.SkipIfBefore6(connectionPool)
 			testhelper.AssertQueryRuns(connectionPool, "CREATE FOREIGN DATA WRAPPER dummy;")
@@ -744,8 +747,14 @@ SET SUBPARTITION TEMPLATE
 			result := backup.GetForeignTableDefinitions(connectionPool)
 			Expect(result).To(BeEmpty())
 		})
+		AfterAll(func() {
+			testhelper.AssertQueryRuns(connectionPool, "CREATE EXTENSION gp_toolkit;")
+		})
 	})
-	Describe("GetForeignTableRelations", func() {
+	Describe("GetForeignTableRelations", Ordered, Serial, func() {
+		BeforeAll(func() {
+			testhelper.AssertQueryRuns(connectionPool, "DROP EXTENSION IF EXISTS gp_toolkit;")
+		})
 		It("Returns a list with FOREIGN table", func() {
 			testutils.SkipIfBefore6(connectionPool)
 			testhelper.AssertQueryRuns(connectionPool, "CREATE FOREIGN DATA WRAPPER dummy;")
@@ -768,6 +777,9 @@ SET SUBPARTITION TEMPLATE
 			defer testhelper.AssertQueryRuns(connectionPool, "DROP TABLE public.some_table")
 			result := backup.GetForeignTableRelations(connectionPool)
 			Expect(result).To(HaveLen(0))
+		})
+		BeforeAll(func() {
+			testhelper.AssertQueryRuns(connectionPool, "DROP EXTENSION IF EXISTS gp_toolkit;")
 		})
 	})
 	Describe("GetTableStorageOptions", func() {
