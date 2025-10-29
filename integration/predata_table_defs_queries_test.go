@@ -748,7 +748,7 @@ SET SUBPARTITION TEMPLATE
 			Expect(result).To(BeEmpty())
 		})
 		It("Returns a map when an external table exists", func() {
-			testutils.SkipIfBefore6(connectionPool)
+			testutils.SkipIfBefore7(connectionPool)
 			testhelper.AssertQueryRuns(connectionPool, `CREATE READABLE EXTERNAL TABLE public.ext_table(i int)
 LOCATION ('gpfdist://tmp/myfile.txt')
 FORMAT 'TEXT'`)

@@ -2536,7 +2536,7 @@ LANGUAGE plpgsql NO SQL;`)
 
 			if backupConn.Version.AtLeast("7") {
 				//GPDB7+ has new "attach table" partition syntax, does not require exchanging for external partitions
-				Expect(string(metadataFileContents)).To(ContainSubstring("CREATE READABLE EXTERNAL TABLE testchema.multipartition_1_prt_dec16_2_prt_apj ("))
+				Expect(string(metadataFileContents)).To(ContainSubstring("CREATE FOREIGN TABLE testchema.multipartition_1_prt_dec16_2_prt_apj ("))
 				Expect(string(metadataFileContents)).To(ContainSubstring("ALTER TABLE ONLY testchema.multipartition_1_prt_dec16 ATTACH PARTITION testchema.multipartition_1_prt_dec16_2_prt_apj FOR VALUES IN ('apj');"))
 			} else {
 				// GPDB5/6 use legacy GPDB syntax, and need an exchange to have an external partition
