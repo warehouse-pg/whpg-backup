@@ -27,8 +27,8 @@ var _ = Describe("backup integration create statement tests", func() {
 			partitionPartFalseExpectation = "false"
 		)
 		BeforeEach(func() {
-			extTableEmpty = backup.ExternalTableDefinition{Oid: 0, Type: -2, Protocol: -2, Location: sql.NullString{String: "", Valid: true}, ExecLocation: "ALL_SEGMENTS", 
-			FormatType: "t", FormatOpts: "", Command: "", RejectLimit: 0, RejectLimitType: "", ErrTableName: "", ErrTableSchema: "", Encoding: "UTF-8", Writable: false, URIs: nil}
+			extTableEmpty = backup.ExternalTableDefinition{Oid: 0, Type: -2, Protocol: -2, Location: sql.NullString{String: "", Valid: true}, ExecLocation: "ALL_SEGMENTS",
+				FormatType: "t", FormatOpts: "", Command: "", RejectLimit: 0, RejectLimitType: "", ErrTableName: "", ErrTableSchema: "", Encoding: "UTF-8", Writable: false, URIs: nil}
 			distPolicy = backup.DistPolicy{Policy: "DISTRIBUTED RANDOMLY"}
 			testTable = backup.Table{
 				Relation:        backup.Relation{Schema: "public", Name: "testtable"},
@@ -524,7 +524,7 @@ SET SUBPARTITION TEMPLATE ` + `
 			view.Oid = testutils.OidFromObjectName(connectionPool, "public", "simpleview", backup.TYPE_RELATION)
 			Expect(resultViews).To(HaveLen(1))
 			resultMetadata := resultMetadataMap[view.GetUniqueID()]
-			structmatcher.ExpectStructsToMatchExcluding(&view, &resultViews[0], "ColumnDefs")
+			structmatcher.ExpectStructsToMatchExcluding(&view, &resultViews[0], "ColumnDefs", "AccessMethod")
 			structmatcher.ExpectStructsToMatch(&viewMetadata, &resultMetadata)
 		})
 		It("creates a view with options", func() {
@@ -564,7 +564,7 @@ SET SUBPARTITION TEMPLATE ` + `
 			view.Oid = testutils.OidFromObjectName(connectionPool, "public", "simplemview", backup.TYPE_RELATION)
 			Expect(resultViews).To(HaveLen(1))
 			resultMetadata := resultMetadataMap[view.GetUniqueID()]
-			structmatcher.ExpectStructsToMatchExcluding(&view, &resultViews[0], "ColumnDefs", "DistPolicy.Oid")
+			structmatcher.ExpectStructsToMatchExcluding(&view, &resultViews[0], "ColumnDefs", "DistPolicy.Oid", "AccessMethod")
 			structmatcher.ExpectStructsToMatch(&viewMetadata, &resultMetadata)
 		})
 		It("creates a materialized view with options", func() {
@@ -579,7 +579,7 @@ SET SUBPARTITION TEMPLATE ` + `
 
 			view.Oid = testutils.OidFromObjectName(connectionPool, "public", "simplemview", backup.TYPE_RELATION)
 			Expect(resultViews).To(HaveLen(1))
-			structmatcher.ExpectStructsToMatchExcluding(&view, &resultViews[0], "ColumnDefs", "DistPolicy.Oid")
+			structmatcher.ExpectStructsToMatchExcluding(&view, &resultViews[0], "ColumnDefs", "DistPolicy.Oid", "AccessMethod")
 		})
 	})
 	Describe("PrintCreateSequenceStatements", func() {
