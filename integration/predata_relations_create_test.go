@@ -27,8 +27,8 @@ var _ = Describe("backup integration create statement tests", func() {
 			partitionPartFalseExpectation = "false"
 		)
 		BeforeEach(func() {
-			extTableEmpty = backup.ExternalTableDefinition{Oid: 0, Type: -2, Protocol: -2, Location: sql.NullString{String: "", Valid: true}, ExecLocation: "ALL_SEGMENTS", 
-			FormatType: "t", FormatOpts: "", Command: "", RejectLimit: 0, RejectLimitType: "", ErrTableName: "", ErrTableSchema: "", Encoding: "UTF-8", Writable: false, URIs: nil}
+			extTableEmpty = backup.ExternalTableDefinition{Oid: 0, Type: -2, Protocol: -2, Location: sql.NullString{String: "", Valid: true}, ExecLocation: "ALL_SEGMENTS",
+				FormatType: "t", FormatOpts: "", Command: "", RejectLimit: 0, RejectLimitType: "", ErrTableName: "", ErrTableSchema: "", Encoding: "UTF-8", Writable: false, URIs: nil}
 			distPolicy = backup.DistPolicy{Policy: "DISTRIBUTED RANDOMLY"}
 			testTable = backup.Table{
 				Relation:        backup.Relation{Schema: "public", Name: "testtable"},
@@ -562,6 +562,9 @@ SET SUBPARTITION TEMPLATE ` + `
 			resultMetadataMap := backup.GetMetadataForObjectType(connectionPool, backup.TYPE_RELATION)
 
 			view.Oid = testutils.OidFromObjectName(connectionPool, "public", "simplemview", backup.TYPE_RELATION)
+			if connectionPool.Version.AtLeast("7") {
+				view.AccessMethod = "heap"
+			}
 			Expect(resultViews).To(HaveLen(1))
 			resultMetadata := resultMetadataMap[view.GetUniqueID()]
 			structmatcher.ExpectStructsToMatchExcluding(&view, &resultViews[0], "ColumnDefs", "DistPolicy.Oid")
@@ -578,6 +581,9 @@ SET SUBPARTITION TEMPLATE ` + `
 			resultViews := backup.GetAllViews(connectionPool)
 
 			view.Oid = testutils.OidFromObjectName(connectionPool, "public", "simplemview", backup.TYPE_RELATION)
+			if connectionPool.Version.AtLeast("7") {
+				view.AccessMethod = "heap"
+			}
 			Expect(resultViews).To(HaveLen(1))
 			structmatcher.ExpectStructsToMatchExcluding(&view, &resultViews[0], "ColumnDefs", "DistPolicy.Oid")
 		})
