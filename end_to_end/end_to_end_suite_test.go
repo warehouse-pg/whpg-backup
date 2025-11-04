@@ -1342,7 +1342,7 @@ var _ = Describe("backup and restore end to end tests", func() {
 			actualForeignTableCount := dbconn.MustSelectString(restoreConn,
 				`SELECT count(*) AS string FROM pg_foreign_table ft
 				JOIN pg_foreign_server fs ON ft.ftserver = fs.oid
-				WHERE fs.srvname = 'gp_exttable_server' AND ft.ftrelid = 'public.e2e_foreign_table'::regclass::oid OR ft.ftrelid = 'public.e2e_external_table'::regclass::oid;`)
+				WHERE fs.srvname = 'gp_exttable_server' AND (ft.ftrelid = 'public.e2e_foreign_table'::regclass::oid OR ft.ftrelid = 'public.e2e_external_table'::regclass::oid);`)
 			Expect(actualForeignTableCount).To(Equal("2"))
 		})
 	})
