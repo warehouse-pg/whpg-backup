@@ -733,16 +733,39 @@ SET SUBPARTITION TEMPLATE
 			oid := testutils.OidFromObjectName(connectionPool, "public", "ft1", backup.TYPE_RELATION)
 			result := backup.GetForeignTableDefinitions(connectionPool)
 			expectedResult := backup.ForeignTableDefinition{Oid: oid, Options: "delimiter ',',    quote '\"'", Server: "sc"}
-			Expect(result).To(HaveLen(1))
+			if connectionPool.Version.Before("7") {
+				Expect(result).To(HaveLen(1))
+			} else {
+				// In GPDB 7+, the foreign table created for gp_toolkit extension also shows up here
+				Expect(result).To(HaveLen(4))
+			}
 			Expect(result[oid]).To(Equal(expectedResult))
 		})
-		It("Returns an empty map when no FOREIGN table exists", func() {
+		It("Returns an empty/default map when no FOREIGN table exists", func() {
 			testutils.SkipIfBefore6(connectionPool)
 			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.some_table (i int, j int)")
 			defer testhelper.AssertQueryRuns(connectionPool, "DROP TABLE public.some_table")
 
 			result := backup.GetForeignTableDefinitions(connectionPool)
-			Expect(result).To(BeEmpty())
+			if connectionPool.Version.Before("7") {
+				Expect(result).To(BeEmpty())
+			} else {
+				// In GPDB 7+, the foreign table created for gp_toolkit extension shows up here
+				Expect(result).To(HaveLen(3))
+			}
+		})
+		It("Returns a map when an external table exists", func() {
+			testutils.SkipIfBefore7(connectionPool)
+			testhelper.AssertQueryRuns(connectionPool, `CREATE READABLE EXTERNAL TABLE public.ext_table(i int)
+LOCATION ('gpfdist://tmp/myfile.txt')
+FORMAT 'TEXT'`)
+			defer testhelper.AssertQueryRuns(connectionPool, "DROP EXTERNAL TABLE public.ext_table")
+
+			oid := testutils.OidFromObjectName(connectionPool, "public", "ext_table", backup.TYPE_RELATION)
+			result := backup.GetForeignTableDefinitions(connectionPool)
+			expectedResult := backup.ForeignTableDefinition{Oid: oid, Options: "delimiter '\t',    encoding 'UTF8',    escape E'\\\\',    execute_on 'ALL_SEGMENTS',    format 'text',    is_writable 'false',    location_uris 'gpfdist://tmp:8080/myfile.txt',    log_errors 'disable',    \"null\" E'\\\\N'", Server: "gp_exttable_server"}
+			Expect(result).To(HaveLen(4))
+			Expect(result[oid]).To(Equal(expectedResult))
 		})
 	})
 	Describe("GetForeignTableRelations", func() {
@@ -762,7 +785,7 @@ SET SUBPARTITION TEMPLATE
 			Expect(result[0].Schema).To(Equal("public"))
 			Expect(result[0].Name).To(Equal("ft1"))
 		})
-		It("Returns an empty list when no FOREIGN table exits", func() {
+		It("Returns an empty/default list when no FOREIGN table exits", func() {
 			testutils.SkipIfBefore6(connectionPool)
 			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.some_table (i int, j int)")
 			defer testhelper.AssertQueryRuns(connectionPool, "DROP TABLE public.some_table")

@@ -428,7 +428,7 @@ func GetDistributionPolicies(connectionPool *dbconn.DBConn, relations interface{
 				tbloids += strconv.Itoa(int(oid))
 			}
 			tbloids += "}"
-		}	else if rels, ok := relations.([]View); ok {
+		} else if rels, ok := relations.([]View); ok {
 			for _, rel := range rels {
 				oid := rel.GetUniqueID().Oid
 				if len(tbloids) > 1 {
@@ -459,7 +459,7 @@ func GetDistributionPolicies(connectionPool *dbconn.DBConn, relations interface{
 				FROM gp_distribution_policy
 				) t 
 			ON t.localoid=distpol.oid
-			LEFT JOIN pg_opclass opc ON opc.oid=t.distclass;`, tbloids, ENUM_TYPE_OID);
+			LEFT JOIN pg_opclass opc ON opc.oid=t.distclass;`, tbloids, ENUM_TYPE_OID)
 	}
 
 	results := make([]DistPolicy, 0)
@@ -681,7 +681,7 @@ func GetForeignTableDefinitions(connectionPool *dbconn.DBConn) map[uint32]Foreig
 		), e',    ') AS ftoptions
 	FROM pg_foreign_table ft
 		JOIN pg_foreign_server fs ON ft.ftserver = fs.oid
-	WHERE ft.ftrelid >= %d AND fs.oid >= %d`, FIRST_NORMAL_OBJECT_ID, FIRST_NORMAL_OBJECT_ID)
+	WHERE ft.ftrelid >= %d`, FIRST_NORMAL_OBJECT_ID)
 	results := make([]ForeignTableDefinition, 0)
 	err := connectionPool.Select(&results, query)
 	gplog.FatalOnError(err)

@@ -1309,6 +1309,43 @@ var _ = Describe("backup and restore end to end tests", func() {
 			Expect(actualStatisticCount).To(Equal("3"))
 		})
 	})
+	Describe("Restore external and foreign tables", func() {
+		It("restores external and foreign tables", func() {
+			testutils.SkipIfBefore7(backupConn)
+			testhelper.AssertQueryRuns(backupConn,
+				`CREATE FOREIGN TABLE public.e2e_foreign_table (
+					i int NOT NULL, -- foreign table supports NOT NULL constraint
+					s text
+				)
+				SERVER gp_exttable_server
+				OPTIONS (format 'text', delimiter ',', null '\N', newline 'CRLF', location_uris 'gpfdist://localhost/path/file', execute_on 'ALL_SEGMENTS', log_errors 'disable', encoding 'UTF8', is_writable 'false');`)
+			defer testhelper.AssertQueryRuns(backupConn,
+				"DROP FOREIGN TABLE public.e2e_foreign_table;")
+
+			externalTableUri := "gpfdist://tmp/external_table_data.text"
+			testhelper.AssertQueryRuns(backupConn,
+				fmt.Sprintf(`CREATE EXTERNAL TABLE public.e2e_external_table (
+					i int,
+					s text
+				)
+				LOCATION ('%s')
+				FORMAT 'text';`, externalTableUri))
+			defer testhelper.AssertQueryRuns(backupConn,
+				"DROP EXTERNAL TABLE public.e2e_external_table;")
+
+			output := gpbackup(gpbackupPath, backupHelperPath)
+			timestamp := getBackupTimestamp(string(output))
+
+			gprestore(gprestorePath, restoreHelperPath, timestamp,
+				"--redirect-db", "restoredb")
+			// Check that both external and foreign tables are restored
+			actualForeignTableCount := dbconn.MustSelectString(restoreConn,
+				`SELECT count(*) AS string FROM pg_foreign_table ft
+				JOIN pg_foreign_server fs ON ft.ftserver = fs.oid
+				WHERE fs.srvname = 'gp_exttable_server' AND (ft.ftrelid = 'public.e2e_foreign_table'::regclass::oid OR ft.ftrelid = 'public.e2e_external_table'::regclass::oid);`)
+			Expect(actualForeignTableCount).To(Equal("2"))
+		})
+	})
 	Describe("Restore with --report-dir", func() {
 		It("runs gprestore without --report-dir", func() {
 			output := gpbackup(gpbackupPath, backupHelperPath,
@@ -2499,7 +2536,7 @@ LANGUAGE plpgsql NO SQL;`)
 
 			if backupConn.Version.AtLeast("7") {
 				//GPDB7+ has new "attach table" partition syntax, does not require exchanging for external partitions
-				Expect(string(metadataFileContents)).To(ContainSubstring("CREATE READABLE EXTERNAL TABLE testchema.multipartition_1_prt_dec16_2_prt_apj ("))
+				Expect(string(metadataFileContents)).To(ContainSubstring("CREATE FOREIGN TABLE testchema.multipartition_1_prt_dec16_2_prt_apj ("))
 				Expect(string(metadataFileContents)).To(ContainSubstring("ALTER TABLE ONLY testchema.multipartition_1_prt_dec16 ATTACH PARTITION testchema.multipartition_1_prt_dec16_2_prt_apj FOR VALUES IN ('apj');"))
 			} else {
 				// GPDB5/6 use legacy GPDB syntax, and need an exchange to have an external partition
