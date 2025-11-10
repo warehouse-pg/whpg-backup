@@ -25,6 +25,11 @@ var (
 	tableDelim = ","
 )
 
+type entryInfo struct {
+	dataEntry toc.CoordinatorDataEntry
+	batch     int
+}
+
 func CopyTableIn(connectionPool *dbconn.DBConn, tableName string, tableAttributes string, destinationToRead string, singleDataFile bool, whichConn int) (int64, error) {
 	if wasTerminated {
 		return -1, nil
@@ -74,60 +79,69 @@ func CopyTableIn(connectionPool *dbconn.DBConn, tableName string, tableAttribute
 	return rowsLoaded, nil
 }
 
-func restoreSingleTableData(fpInfo *filepath.FilePathInfo, entry toc.CoordinatorDataEntry, tableName string, whichConn int) error {
+func restoreSingleTableData(fpInfo *filepath.FilePathInfo, entry toc.CoordinatorDataEntry, batch int, tableName string, rowProcessedChan chan int64, whichConn int) error {
 	origSize, destSize, resizeCluster, batches := GetResizeClusterInfo()
-
-	var lastErr error
 	var numRowsRestored int64
 	// We don't want duplicate data for replicated tables so only do one batch
 	if entry.IsReplicated {
 		batches = 1
 	}
-	for i := 0; i < batches; i++ {
-		destinationToRead := ""
-		if backupConfig.SingleDataFile || resizeCluster {
-			destinationToRead = fmt.Sprintf("%s_%d_%d", fpInfo.GetSegmentPipePathForCopyCommand(), entry.Oid, i)
-		} else {
-			destinationToRead = fpInfo.GetTableBackupFilePathForCopyCommand(entry.Oid, utils.GetPipeThroughProgram().Extension, backupConfig.SingleDataFile)
+
+	// Truncate table before restore, if needed.
+	if (MustGetFlagBool(options.INCREMENTAL) || MustGetFlagBool(options.TRUNCATE_TABLE)) && batch == 0 {
+		gplog.Verbose("Truncating table %s prior to restoring data", tableName)
+		_, err := connectionPool.Exec(`TRUNCATE `+tableName, whichConn)
+		if err != nil {
+			gplog.Error(err.Error())
+			return err
 		}
-		gplog.Debug("Reading from %s", destinationToRead)
-
-		if entry.DistByEnum {
-			gplog.Verbose("Setting gp_enable_segment_copy_checking TO off for table %s", tableName)
-			connectionPool.MustExec("SET gp_enable_segment_copy_checking TO off;", whichConn)
-			defer connectionPool.MustExec("RESET gp_enable_segment_copy_checking;", whichConn)
-		}
-
-		// In the case where an error file is found, this means that the
-		// restore_helper has encountered an error and has shutdown.
-		// If this occurs we need to error out, as subsequent COPY statements
-		// will hang indefinitely waiting to read from pipes that the helper
-		// was expected to set up
-		if backupConfig.SingleDataFile {
-			agentErr := utils.CheckAgentErrorsOnSegments(globalCluster, globalFPInfo)
-			gplog.FatalOnError(agentErr)
-		}
-
-		partialRowsRestored, copyErr := CopyTableIn(connectionPool, tableName, entry.AttributeString, destinationToRead, backupConfig.SingleDataFile, whichConn)
-
-		if copyErr != nil {
-			gplog.Error(copyErr.Error())
-			if MustGetFlagBool(options.ON_ERROR_CONTINUE) {
-				if connectionPool.Version.AtLeast("6") && backupConfig.SingleDataFile {
-					// inform segment helpers to skip this entry
-					utils.CreateSkipFileOnSegments(fmt.Sprintf("%d", entry.Oid), tableName, globalCluster, globalFPInfo)
-				}
-				lastErr = copyErr
-				copyErr = nil
-				continue
-			}
-			return copyErr
-		}
-		numRowsRestored += partialRowsRestored
-
 	}
-	if lastErr != nil {
-		return lastErr
+
+	destinationToRead := ""
+	if backupConfig.SingleDataFile || resizeCluster {
+		destinationToRead = fmt.Sprintf("%s_%d_%d", fpInfo.GetSegmentPipePathForCopyCommand(), entry.Oid, batch)
+	} else {
+		destinationToRead = fpInfo.GetTableBackupFilePathForCopyCommand(entry.Oid, utils.GetPipeThroughProgram().Extension, backupConfig.SingleDataFile)
+	}
+	gplog.Debug("Reading from %s", destinationToRead)
+
+	if entry.DistByEnum {
+		gplog.Verbose("Setting gp_enable_segment_copy_checking TO off for table %s", tableName)
+		connectionPool.MustExec("SET gp_enable_segment_copy_checking TO off;", whichConn)
+		defer connectionPool.MustExec("RESET gp_enable_segment_copy_checking;", whichConn)
+	}
+
+	// In the case where an error file is found, this means that the
+	// restore_helper has encountered an error and has shutdown.
+	// If this occurs we need to error out, as subsequent COPY statements
+	// will hang indefinitely waiting to read from pipes that the helper
+	// was expected to set up
+	if backupConfig.SingleDataFile {
+		agentErr := utils.CheckAgentErrorsOnSegments(globalCluster, globalFPInfo)
+		gplog.FatalOnError(agentErr)
+	}
+
+	partialRowsRestored, copyErr := CopyTableIn(connectionPool, tableName, entry.AttributeString, destinationToRead, backupConfig.SingleDataFile, whichConn)
+	rowProcessedChan <- partialRowsRestored
+
+	if copyErr != nil {
+		gplog.Error(copyErr.Error())
+		if MustGetFlagBool(options.ON_ERROR_CONTINUE) {
+			if connectionPool.Version.AtLeast("6") && backupConfig.SingleDataFile {
+				// inform segment helpers to skip this entry
+				utils.CreateSkipFileOnSegments(fmt.Sprintf("%d", entry.Oid), tableName, globalCluster, globalFPInfo)
+			}
+		}
+		return copyErr
+	}
+
+	// no need to validate until the last batch
+	if batch != batches-1 {
+		return nil
+	}
+
+	for i := 0; i < batches; i++ {
+		numRowsRestored += <-rowProcessedChan
 	}
 
 	numRowsBackedUp := entry.RowsCopied
@@ -152,11 +166,13 @@ func restoreSingleTableData(fpInfo *filepath.FilePathInfo, entry toc.Coordinator
 			err := ExpandReplicatedTable(origSize, tableName, whichConn)
 			if err != nil {
 				gplog.Error(err.Error())
+				return err
 			}
 		} else {
 			err := RedistributeTableData(tableName, whichConn)
 			if err != nil {
 				gplog.Error(err.Error())
+				return err
 			}
 		}
 	}
@@ -200,13 +216,14 @@ func RedistributeTableData(tableName string, whichConn int) error {
 	return err
 }
 
-func restoreDataFromTimestamp(fpInfo filepath.FilePathInfo, dataEntries []toc.CoordinatorDataEntry,
-	gucStatements []toc.StatementWithType, dataProgressBar utils.ProgressBar) int32 {
-	totalTables := len(dataEntries)
-	if totalTables == 0 {
+func restoreDataFromTimestamp(fpInfo filepath.FilePathInfo, dataEntries []toc.CoordinatorDataEntry, gucStatements []toc.StatementWithType) int32 {
+	if len(dataEntries) == 0 {
 		gplog.Verbose("No data to restore for timestamp = %s", fpInfo.Timestamp)
 		return 0
 	}
+
+	entryList := make([]entryInfo, 0)
+	rowProcessedChans := make(map[uint32]chan int64)
 
 	origSize, destSize, resizeCluster, batches := GetResizeClusterInfo()
 	if backupConfig.SingleDataFile || resizeCluster {
@@ -226,12 +243,16 @@ func restoreDataFromTimestamp(fpInfo filepath.FilePathInfo, dataEntries []toc.Co
 		for _, entry := range dataEntries {
 			if entry.IsReplicated {
 				oidList = append(oidList, fmt.Sprintf("%d,0", entry.Oid))
+				entryList = append(entryList, entryInfo{dataEntry: entry, batch: 0})
+				rowProcessedChans[entry.Oid] = make(chan int64, 1)
 				continue
 			}
 
 			for b := 0; b < batches; b++ {
 				oidList = append(oidList, fmt.Sprintf("%d,%d", entry.Oid, b))
+				entryList = append(entryList, entryInfo{dataEntry: entry, batch: b})
 			}
+			rowProcessedChans[entry.Oid] = make(chan int64, batches)
 		}
 
 		utils.WriteOidListToSegments(oidList, globalCluster, fpInfo, "oid")
@@ -248,14 +269,23 @@ func restoreDataFromTimestamp(fpInfo filepath.FilePathInfo, dataEntries []toc.Co
 			compressStr = fmt.Sprintf(" --compression-type %s ", utils.GetPipeThroughProgram().Name)
 		}
 		utils.StartGpbackupHelpers(globalCluster, fpInfo, "--restore-agent", MustGetFlagString(options.PLUGIN_CONFIG), compressStr, MustGetFlagBool(options.ON_ERROR_CONTINUE), isFilter, &wasTerminated, initialPipes, backupConfig.SingleDataFile, resizeCluster, origSize, destSize, gplog.GetVerbosity())
+	} else {
+		for _, entry := range dataEntries {
+			entryList = append(entryList, entryInfo{dataEntry: entry, batch: 0})
+			rowProcessedChans[entry.Oid] = make(chan int64, 1)
+		}
 	}
+	totalEntries := len(entryList)
+
+	dataProgressBar := utils.NewProgressBar(totalEntries, "Tables restored: ", utils.PB_INFO)
+	dataProgressBar.Start()
 	/*
 	 * We break when an interrupt is received and rely on
 	 * TerminateHangingCopySessions to stop any COPY
 	 * statements in progress if they don't finish on their own.
 	 */
 	var tableNum int64 = 0
-	tasks := make(chan toc.CoordinatorDataEntry, totalTables)
+	tasks := make(chan entryInfo, totalEntries)
 	var workerPool sync.WaitGroup
 	var numErrors int32
 	var mutex = &sync.Mutex{}
@@ -272,27 +302,20 @@ func restoreDataFromTimestamp(fpInfo filepath.FilePathInfo, dataEntries []toc.Co
 			defer workerPool.Done()
 
 			setGUCsForConnection(gucStatements, whichConn)
-			for entry := range tasks {
+			for task := range tasks {
 				if wasTerminated {
 					dataProgressBar.(*pb.ProgressBar).NotPrint = true
 					return
 				}
+				entry := task.dataEntry
+				batch := task.batch
+
 				tableName := utils.MakeFQN(entry.Schema, entry.Name)
 				if opts.RedirectSchema != "" {
 					tableName = utils.MakeFQN(opts.RedirectSchema, entry.Name)
 				}
-				// Truncate table before restore, if needed
-				var err error
-				if MustGetFlagBool(options.INCREMENTAL) || MustGetFlagBool(options.TRUNCATE_TABLE) {
-					gplog.Verbose("Truncating table %s prior to restoring data", tableName)
-					_, err := connectionPool.Exec(`TRUNCATE `+tableName, whichConn)
-					if err != nil {
-						gplog.Error(err.Error())
-					}
-				}
-				if err == nil {
-					err = restoreSingleTableData(&fpInfo, entry, tableName, whichConn)
-				}
+
+				err := restoreSingleTableData(&fpInfo, entry, batch, tableName, rowProcessedChans[entry.Oid], whichConn)
 
 				if err != nil {
 					atomic.AddInt32(&numErrors, 1)
@@ -304,14 +327,29 @@ func restoreDataFromTimestamp(fpInfo filepath.FilePathInfo, dataEntries []toc.Co
 					errorTablesData[tableName] = Empty{}
 					mutex.Unlock()
 				} else {
-					utils.LogProgress("Restored data to table %s from file (table %d of %d)", tableName, atomic.AddInt64(&tableNum, 1), totalTables)
+					if gplog.GetVerbosity() >= gplog.LOGVERBOSE {
+						utils.LogProgress(
+							"Restored data to table %s%s from file (table %d of %d)",
+							tableName,
+							func() string {
+								if resizeCluster {
+									return fmt.Sprintf(" batch %d", batch)
+								}
+								return ""
+							}(),
+							atomic.AddInt64(&tableNum, 1),
+							totalEntries,
+						)
+					} else {
+						utils.LogProgress("Restored data to table %s from file (table %d of %d)", tableName, atomic.AddInt64(&tableNum, 1), totalEntries)
+					}
 				}
 
 				dataProgressBar.Increment()
 			}
 		}(i)
 	}
-	for _, entry := range dataEntries {
+	for _, entry := range entryList {
 		tasks <- entry
 	}
 	close(tasks)
@@ -323,6 +361,8 @@ func restoreDataFromTimestamp(fpInfo filepath.FilePathInfo, dataEntries []toc.Co
 	default:
 		// no panic, nothing to do
 	}
+
+	dataProgressBar.Finish()
 
 	if numErrors > 0 {
 		fmt.Println("")
