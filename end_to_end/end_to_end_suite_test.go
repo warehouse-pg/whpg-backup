@@ -2302,8 +2302,8 @@ LANGUAGE plpgsql NO SQL;`)
 			Entry("Can backup a 9-segment cluster and restore to current cluster with single data file", "20220909090827", "", "9-segment-db-single-data-file", false, false, true, false, false),
 			Entry("Can backup a 9-segment cluster and restore to current cluster with incremental backups", "20220909150254", "20220909150353", "9-segment-db-incremental", true, false, false, false, false),
 
-			Entry("Can backup a 9-segment cluster and restore to current cluster with jobs 4", "20220909090739", "", "9-segment-db", false, false, false, false, true),
-			Entry("Can backup a 9-segment cluster and restore to current cluster with single data file and copy-queue-size 4", "20220909090828", "", "9-segment-db-single-data-file", false, false, true, false, true),
+			Entry("Can backup a 9-segment cluster and restore to current cluster with jobs 4", "20220909090738", "", "9-segment-db", false, false, false, false, true),
+			Entry("Can backup a 9-segment cluster and restore to current cluster with single data file and copy-queue-size 4", "20220909090827", "", "9-segment-db-single-data-file", false, false, true, false, true),
 
 			Entry("Can backup a 7-segment cluster and restore to current cluster", "20220908145504", "", "7-segment-db", false, false, false, false, false),
 			Entry("Can backup a 7-segment cluster and restore to current cluster single data file", "20220912101931", "", "7-segment-db-single-data-file", false, false, true, false, false),
