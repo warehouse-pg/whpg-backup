@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
 	"github.com/klauspost/compress/zstd"
@@ -175,6 +177,16 @@ func doRestoreAgent() error {
 
 	preloadCreatedPipesForRestore(oidWithBatchList, *copyQueue)
 
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
+	}
+	defer watcher.Close()
+	err = watcher.Add(filepath.Dir(*pipeFile))
+	if err != nil {
+		return err
+	}
+
 	var currentPipe string
 	for i, oidWithBatch := range oidWithBatchList {
 		tableOid := oidWithBatch.oid
@@ -228,45 +240,49 @@ func doRestoreAgent() error {
 			}
 		}
 
-		logInfo(fmt.Sprintf("Oid %d, Batch %d: Opening pipe %s", tableOid, batchNum, currentPipe))
-		for {
-			writer, writeHandle, err = getRestorePipeWriter(currentPipe)
+		fileChan := make(chan *os.File, 1)
+		errChan := make(chan error, 1)
+		go func() {
+			logInfo(fmt.Sprintf("Oid %d, Batch %d: Opening pipe %s for writing in blocking mode", tableOid, batchNum, currentPipe))
+			file, err := os.OpenFile(currentPipe, os.O_WRONLY, os.ModeNamedPipe)
 			if err != nil {
-				if errors.Is(err, unix.ENXIO) {
-					// COPY (the pipe reader) has not tried to access the pipe yet so our restore_helper
-					// process will get ENXIO error on its nonblocking open call on the pipe. We loop in
-					// here while looking to see if gprestore has created a skip file for this restore entry.
-					//
-					// TODO: Skip files will only be created when gprestore is run against GPDB 6+ so it
-					// might be good to have a GPDB version check here. However, the restore helper should
-					// not contain a database connection so the version should be passed through the helper
-					// invocation from gprestore (e.g. create a --db-version flag option).
-					if *onErrorContinue && utils.FileExists(fmt.Sprintf("%s_skip_%d", *pipeFile, tableOid)) {
-						logWarn(fmt.Sprintf("Oid %d, Batch %d: Skip file discovered, skipping this relation.", tableOid, batchNum))
-						err = nil
-						goto LoopEnd
-					} else {
-						// keep trying to open the pipe
-						time.Sleep(50 * time.Millisecond)
-					}
-				} else {
-					// In the case this error is hit it means we have lost the
-					// ability to open pipes normally, so hard quit even if
-					// --on-error-continue is given
-					logError(fmt.Sprintf("Oid %d, Batch %d: Pipes can no longer be opened. Exiting with error: %s", tableOid, batchNum, err))
-					return err
-				}
-			} else {
-				// A reader has connected to the pipe and we have successfully opened
-				// the writer for the pipe. To avoid having to write complex buffer
-				// logic for when os.write() returns EAGAIN due to full buffer, set
-				// the file descriptor to block on IO.
-				unix.SetNonblock(int(writeHandle.Fd()), false)
+				errChan <- err
+			}
+			fileChan <- file
+		}()
+
+		var waitedTime time.Duration
+		readTicker := time.NewTicker(1 * time.Minute)
+		for {
+			if *onErrorContinue && utils.FileExists(fmt.Sprintf("%s_skip_%d_%d", *pipeFile, tableOid, batchNum)) {
+				skipRelation(tableOid, batchNum, currentPipe)
+				err = nil
+				goto LoopEnd
+			}
+			select {
+			case writeHandle = <-fileChan:
+				writer = bufio.NewWriter(struct{ io.WriteCloser }{writeHandle})
 				logVerbose(fmt.Sprintf("Oid %d, Batch %d: Reader connected to pipe %s", tableOid, batchNum, path.Base(currentPipe)))
-				break
+				goto ReaderConnected
+			case event := <-watcher.Events:
+				if *onErrorContinue && event.Has(fsnotify.Create) && event.Name == fmt.Sprintf("%s_skip_%d_%d", *pipeFile, tableOid, batchNum) {
+					skipRelation(tableOid, batchNum, currentPipe)
+					err = nil
+					goto LoopEnd
+				}
+			case err = <-errChan:
+				logError(fmt.Sprintf("Oid %d, Batch %d: Can not open pipe %s for writing. Exiting: %s", tableOid, batchNum, currentPipe, err))
+				return err
+			case watcherErr := <-watcher.Errors:
+				logError(fmt.Sprintf("Oid: %d, Batch %d: File watcher error: %v", tableOid, batchNum, watcherErr))
+				return watcherErr
+			case <-readTicker.C:
+				waitedTime += 1 * time.Minute
+				logVerbose(fmt.Sprintf("Oid %d, Batch %d: Reader not connected to pipe %s yet. %s passed.", tableOid, batchNum, currentPipe, waitedTime))
 			}
 		}
 
+	ReaderConnected:
 		// Only position reader in case of SDF.  MDF case reads entire file, and does not need positioning.
 		// Further, in SDF case, map entries for contents that were not part of original backup will be nil,
 		// and calling methods on them errors silently.
@@ -342,6 +358,13 @@ func doRestoreAgent() error {
 	}
 
 	return lastError
+}
+
+func skipRelation(oid int, batch int, pipeName string) {
+	logWarn(fmt.Sprintf("Oid %d, Batch %d: Skipping this relation due to the skip file.", oid, batch))
+	// still need to open then close, to not block the goroutine
+	file, _ := os.OpenFile(pipeName, os.O_RDONLY|unix.O_NONBLOCK, os.ModeNamedPipe)
+	file.Close()
 }
 
 func constructSingleTableFilename(name string, contentToRestore int, oid int) string {
@@ -426,24 +449,6 @@ func getRestoreDataReader(fileToRead string, objToc *toc.SegmentTOC, oidList []i
 	}
 
 	return restoreReader, err
-}
-
-func getRestorePipeWriter(currentPipe string) (*bufio.Writer, *os.File, error) {
-	fileHandle, err := os.OpenFile(currentPipe, os.O_WRONLY|unix.O_NONBLOCK, os.ModeNamedPipe)
-	if err != nil {
-		// error logging handled by calling functions
-		return nil, nil, err
-	}
-
-	// At the moment (Golang 1.15), the copy_file_range system call from the os.File
-	// ReadFrom method is only supported for Linux platforms. Furthermore, cross-filesystem
-	// support only works on kernel versions 5.3 and above. Until modern OS platforms start
-	// adopting the new kernel, we must only use the bare essential methods Write() and
-	// Close() for the pipe to avoid an extra buffer read that can happen in error
-	// scenarios with --on-error-continue.
-	pipeWriter := bufio.NewWriter(struct{ io.WriteCloser }{fileHandle})
-
-	return pipeWriter, fileHandle, nil
 }
 
 func startRestorePluginCommand(fileToRead string, objToc *toc.SegmentTOC, oidList []int) (io.Reader, bool, error) {
