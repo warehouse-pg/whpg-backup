@@ -106,7 +106,7 @@ func gprestore(gprestorePath string, restoreHelperPath string, timestamp string,
 		mustRunCommand(command)
 		_ = os.Chdir("end_to_end")
 	}
-	args = append([]string{"--verbose", "--timestamp", timestamp}, args...)
+	args = append([]string{"--debug", "--timestamp", timestamp}, args...)
 	command := exec.Command(gprestorePath, args...)
 	output := mustRunCommand(command)
 	return output
@@ -2238,7 +2238,6 @@ LANGUAGE plpgsql NO SQL;`)
 				}
 
 				gprestoreArgs := []string{
-					"--debug",
 					"--redirect-db", "restoredb",
 					"--backup-dir", extractDirectory,
 					"--resize-cluster",
