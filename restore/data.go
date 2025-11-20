@@ -327,22 +327,11 @@ func restoreDataFromTimestamp(fpInfo filepath.FilePathInfo, dataEntries []toc.Co
 					errorTablesData[tableName] = Empty{}
 					mutex.Unlock()
 				} else {
-					if gplog.GetVerbosity() >= gplog.LOGVERBOSE {
-						utils.LogProgress(
-							"Restored data to table %s%s from file (table %d of %d)",
-							tableName,
-							func() string {
-								if resizeCluster {
-									return fmt.Sprintf(" batch %d", batch)
-								}
-								return ""
-							}(),
-							atomic.AddInt64(&tableNum, 1),
-							totalEntries,
-						)
-					} else {
-						utils.LogProgress("Restored data to table %s from file (table %d of %d)", tableName, atomic.AddInt64(&tableNum, 1), totalEntries)
+					batchLog := ""
+					if resizeCluster {
+						batchLog = fmt.Sprintf(" batch %d", batch)
 					}
+					utils.LogProgress("Restored data to table %s%s from file (table %d of %d)", tableName, batchLog, atomic.AddInt64(&tableNum, 1), totalEntries)
 				}
 
 				dataProgressBar.Increment()
