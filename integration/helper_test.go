@@ -345,6 +345,42 @@ options:
 			// Check that an error file was created
 			Expect(errorFile).To(BeAnExistingFile())
 		})
+		It("continue restore process if skip file created before helper processes", func() {
+			setupRestoreFiles("", false)
+			skipPath := fmt.Sprintf("%s_skip_%d_%d", pipeFile, 1, 0)
+			os.Create(skipPath)
+			defer os.Remove(skipPath)
+			helperCmd := gpbackupHelperRestore(gpbackupHelperPath, "--data-file", dataFileFullPath, "--single-data-file", "--on-error-continue")
+
+			waitForPipeCreation()
+			// table 1 has been skipped
+			contents, err := ioutil.ReadFile(fmt.Sprintf("%s_%d_0", pipeFile, 3))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(string(contents)).To(Equal("here is some data\n"))
+
+			err = helperCmd.Wait()
+			printHelperLogOnError(err)
+			Expect(err).ToNot(HaveOccurred())
+			assertNoErrors()
+		})
+		It("continue restore if skip file created after helper trying to process", func() {
+			setupRestoreFiles("", false)
+			skipPath := fmt.Sprintf("%s_skip_%d_%d", pipeFile, 1, 0)
+			helperCmd := gpbackupHelperRestore(gpbackupHelperPath, "--data-file", dataFileFullPath, "--single-data-file", "--on-error-continue")
+
+			waitForPipeCreation()
+			os.Create(skipPath)
+			defer os.Remove(skipPath)
+			// table 1 has been skipped
+			contents, err := ioutil.ReadFile(fmt.Sprintf("%s_%d_0", pipeFile, 3))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(string(contents)).To(Equal("here is some data\n"))
+
+			err = helperCmd.Wait()
+			printHelperLogOnError(err)
+			Expect(err).ToNot(HaveOccurred())
+			assertNoErrors()
+		})
 	})
 })
 
