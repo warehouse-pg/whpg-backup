@@ -178,6 +178,10 @@ var _ = Describe("End to End plugin tests", func() {
 					"DROP MATERIALIZED VIEW mview2;")
 			}
 
+			if backupConn.Version.AtLeast("7") {
+				testutils.ExecuteSQLFile(backupConn, "resources/external_partition_test.sql")
+			}
+
 			output := gpbackup(gpbackupPath, backupHelperPath,
 				"--leaf-partition-data",
 				"--single-data-file")

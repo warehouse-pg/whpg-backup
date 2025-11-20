@@ -46,8 +46,8 @@ func SplitTablesByPartitionType(tables []Table, includeList []options.Relation) 
 					// GPDB7+ has different conventions for external partitions
 					// and does not need the suffix added
 					table.Name = AppendExtPartSuffix(table.Name)
+					metadataTables = append(metadataTables, table)
 				}
-				metadataTables = append(metadataTables, table)
 			}
 			partType := table.PartitionLevelInfo.Level
 			if connectionPool.Version.AtLeast("7") {
