@@ -2238,6 +2238,7 @@ LANGUAGE plpgsql NO SQL;`)
 				}
 
 				gprestoreArgs := []string{
+					"--debug",
 					"--redirect-db", "restoredb",
 					"--backup-dir", extractDirectory,
 					"--resize-cluster",
