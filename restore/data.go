@@ -369,7 +369,14 @@ func CreateInitialSegmentPipes(oidList []string, c *cluster.Cluster, connectionP
 	} else {
 		maxPipes = len(oidList)
 	}
-	for i := 0; i < maxPipes; i++ {
+	// When using parallel connections, we need to create all pipes upfront
+	// because tasks can be assigned to any connection in any order
+	numPipesToCreate := len(oidList)
+	if connectionPool.NumConns == 1 {
+		// For single connection, only create maxPipes initially (the rest will be created on-demand)
+		numPipesToCreate = maxPipes
+	}
+	for i := 0; i < numPipesToCreate; i++ {
 		utils.CreateSegmentPipeOnAllHostsForRestore(oidList[i], c, fpInfo)
 	}
 	return maxPipes
