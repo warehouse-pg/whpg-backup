@@ -253,27 +253,33 @@ func doRestoreAgent() error {
 
 		var waitedTime time.Duration
 		readTicker := time.NewTicker(1 * time.Minute)
+	ConnectionLoop:
 		for {
 			if *onErrorContinue && utils.FileExists(fmt.Sprintf("%s_skip_%d_%d", *pipeFile, tableOid, batchNum)) {
+				readTicker.Stop()
 				skipRelation(tableOid, batchNum, currentPipe)
 				err = nil
 				goto LoopEnd
 			}
 			select {
 			case writeHandle = <-fileChan:
+				readTicker.Stop()
 				writer = bufio.NewWriter(struct{ io.WriteCloser }{writeHandle})
 				logVerbose(fmt.Sprintf("Oid %d, Batch %d: Reader connected to pipe %s", tableOid, batchNum, path.Base(currentPipe)))
-				goto ReaderConnected
+				break ConnectionLoop
 			case event := <-watcher.Events:
 				if *onErrorContinue && event.Has(fsnotify.Create) && event.Name == fmt.Sprintf("%s_skip_%d_%d", *pipeFile, tableOid, batchNum) {
+					readTicker.Stop()
 					skipRelation(tableOid, batchNum, currentPipe)
 					err = nil
 					goto LoopEnd
 				}
 			case err = <-errChan:
+				readTicker.Stop()
 				logError(fmt.Sprintf("Oid %d, Batch %d: Can not open pipe %s for writing. Exiting: %s", tableOid, batchNum, currentPipe, err))
 				return err
 			case watcherErr := <-watcher.Errors:
+				readTicker.Stop()
 				logError(fmt.Sprintf("Oid: %d, Batch %d: File watcher error: %v", tableOid, batchNum, watcherErr))
 				return watcherErr
 			case <-readTicker.C:
@@ -282,7 +288,6 @@ func doRestoreAgent() error {
 			}
 		}
 
-	ReaderConnected:
 		// Only position reader in case of SDF.  MDF case reads entire file, and does not need positioning.
 		// Further, in SDF case, map entries for contents that were not part of original backup will be nil,
 		// and calling methods on them errors silently.

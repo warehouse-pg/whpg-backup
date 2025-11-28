@@ -79,7 +79,7 @@ func CopyTableIn(connectionPool *dbconn.DBConn, tableName string, tableAttribute
 	return rowsLoaded, nil
 }
 
-func restoreSingleTableData(fpInfo *filepath.FilePathInfo, entry toc.CoordinatorDataEntry, batch int, tableName string, rowProcessedChan chan int64, whichConn int) error {
+func restoreSingleBatchData(fpInfo *filepath.FilePathInfo, entry toc.CoordinatorDataEntry, batch int, tableName string, rowProcessedChan chan int64, whichConn int) error {
 	origSize, destSize, resizeCluster, batches := GetResizeClusterInfo()
 	var numRowsRestored int64
 	// We don't want duplicate data for replicated tables so only do one batch
@@ -135,7 +135,7 @@ func restoreSingleTableData(fpInfo *filepath.FilePathInfo, entry toc.Coordinator
 		return copyErr
 	}
 
-	// no need to validate until the last batch
+	// no need to validate except the last batch
 	if batch != batches-1 {
 		return nil
 	}
@@ -315,7 +315,7 @@ func restoreDataFromTimestamp(fpInfo filepath.FilePathInfo, dataEntries []toc.Co
 					tableName = utils.MakeFQN(opts.RedirectSchema, entry.Name)
 				}
 
-				err := restoreSingleTableData(&fpInfo, entry, batch, tableName, rowProcessedChans[entry.Oid], whichConn)
+				err := restoreSingleBatchData(&fpInfo, entry, batch, tableName, rowProcessedChans[entry.Oid], whichConn)
 
 				if err != nil {
 					atomic.AddInt32(&numErrors, 1)
