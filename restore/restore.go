@@ -479,17 +479,14 @@ func restoreData() (int, map[string][]toc.CoordinatorDataEntry) {
 		filteredDataEntries[entry.Timestamp] = filteredDataEntriesForTimestamp
 		totalTables += len(filteredDataEntriesForTimestamp)
 	}
-	dataProgressBar := utils.NewProgressBar(totalTables, "Tables restored: ", utils.PB_INFO)
-	dataProgressBar.Start()
 
 	gucStatements := setGUCsForConnection(nil, 0)
 	numErrors := int32(0)
 	for timestamp, entries := range filteredDataEntries {
 		gplog.Verbose("Restoring data for %d tables from backup with timestamp: %s", len(entries), timestamp)
-		numErrors = restoreDataFromTimestamp(GetBackupFPInfoForTimestamp(timestamp), entries, gucStatements, dataProgressBar)
+		numErrors = restoreDataFromTimestamp(GetBackupFPInfoForTimestamp(timestamp), entries, gucStatements)
 	}
 
-	dataProgressBar.Finish()
 	if wasTerminated {
 		gplog.Info("Data restore incomplete")
 	} else if numErrors > 0 {
