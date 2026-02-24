@@ -478,7 +478,7 @@ func DoCleanup(backupFailed bool) {
 	if connectionPool != nil {
 		cancelBlockedQueries(globalFPInfo.Timestamp)
 	}
-	if globalFPInfo.Timestamp != "" && MustGetFlagBool(options.SINGLE_DATA_FILE) {
+	if globalCluster != nil && globalFPInfo.Timestamp != "" && MustGetFlagBool(options.SINGLE_DATA_FILE) {
 		// Copy sessions must be terminated before cleaning up gpbackup_helper processes to avoid a potential deadlock
 		// If the terminate query is sent via a connection with an active COPY command, and the COPY's pipe is cleaned up, the COPY query will hang.
 		// This results in the DoCleanup function passed to the signal handler to never return, blocking the os.Exit call
@@ -504,7 +504,7 @@ func DoCleanup(backupFailed bool) {
 	// failure; in either case, update the end time to the actual value. Between our signal handler and recovering
 	// panics, there should be no way for gpbackup to exit that leaves the entry in the initial status.
 
-	if !MustGetFlagBool(options.NO_HISTORY) {
+	if !MustGetFlagBool(options.NO_HISTORY) && backupReport != nil {
 		var statusString string
 		if backupFailed {
 			statusString = history.BackupStatusFailed

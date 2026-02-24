@@ -1,8 +1,14 @@
 package restore
 
 import (
+	"sync"
+
 	"github.com/greenplum-db/gp-common-go-libs/dbconn"
+	"github.com/greenplum-db/gpbackup/filepath"
+	"github.com/greenplum-db/gpbackup/history"
+	"github.com/greenplum-db/gpbackup/options"
 	"github.com/greenplum-db/gpbackup/toc"
+	"github.com/spf13/pflag"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -135,6 +141,46 @@ var _ = Describe("restore internal tests", func() {
 				//fmt.Println("\n\nACTUAL\n", statements[i], "\nEXPECTED\n", expectedStatements[i])
 				Expect(statements[i]).To(Equal(expectedStatements[i]))
 			}
+		})
+	})
+
+	Describe("DoCleanup", func() {
+		BeforeEach(func() {
+			cmdFlags = pflag.NewFlagSet("gprestore", pflag.ExitOnError)
+			SetCmdFlags(cmdFlags)
+
+			CleanupGroup = &sync.WaitGroup{}
+			CleanupGroup.Add(1)
+
+			wasTerminated = false
+		})
+
+		It("does not panic when globalCluster is nil and backupConfig has SingleDataFile set", func() {
+			globalCluster = nil
+			globalFPInfo = filepath.FilePathInfo{Timestamp: "20170101010101"}
+			backupConfig = &history.BackupConfig{SingleDataFile: true}
+			connectionPool = nil
+
+			DoCleanup(true)
+		})
+
+		It("does not panic when globalCluster is nil and resize-cluster is set", func() {
+			globalCluster = nil
+			globalFPInfo = filepath.FilePathInfo{Timestamp: "20170101010101"}
+			backupConfig = &history.BackupConfig{}
+			_ = cmdFlags.Set(options.RESIZE_CLUSTER, "true")
+			connectionPool = nil
+
+			DoCleanup(true)
+		})
+
+		It("does not panic when all globals are nil", func() {
+			globalCluster = nil
+			globalFPInfo = filepath.FilePathInfo{}
+			backupConfig = nil
+			connectionPool = nil
+
+			DoCleanup(true)
 		})
 	})
 })
