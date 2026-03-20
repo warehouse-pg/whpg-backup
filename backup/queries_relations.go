@@ -543,3 +543,36 @@ func GenerateTableBatches(tables []Relation, batchSize int) []string {
 
 	return batches
 }
+
+// GetExtensionConfigDumpTables returns Table objects for tables registered via
+// pg_extension_config_dump. These are extension-owned tables whose data should
+// be backed up (and restored) alongside user data, even though the table DDL
+// is managed by the extension itself.
+//
+// This mirrors the behavior of pg_dump, which queries pg_extension.extconfig
+// to identify config dump tables and includes their data in the dump.
+func GetExtensionConfigDumpTables(connectionPool *dbconn.DBConn) []Table {
+	query := `
+	SELECT n.oid AS schemaoid,
+		c.oid AS oid,
+		quote_ident(n.nspname) AS schema,
+		quote_ident(c.relname) AS name
+	FROM pg_extension e,
+		unnest(e.extconfig) AS config_oid
+		JOIN pg_class c ON c.oid = config_oid
+		JOIN pg_namespace n ON c.relnamespace = n.oid
+	WHERE e.extconfig IS NOT NULL`
+
+	configRelations := make([]Relation, 0)
+	err := connectionPool.Select(&configRelations, query)
+	gplog.FatalOnError(err)
+
+	if len(configRelations) == 0 {
+		return nil
+	}
+
+	gplog.Info("Found %d extension config dump table(s)", len(configRelations))
+
+	// Build full Table objects so they can be COPY'd via the normal data backup path.
+	return ConstructDefinitionsForTables(connectionPool, configRelations)
+}

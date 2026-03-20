@@ -557,4 +557,46 @@ PARTITION BY LIST (gender)
 			structmatcher.ExpectStructsToMatchExcluding(&materialView, &results[0], "Oid", "ColumnDefs", "DistPolicy.Oid")
 		})
 	})
+	Describe("GetExtensionConfigDumpTables", func() {
+		It("returns empty when no extensions have config dump tables", func() {
+			tables := backup.GetExtensionConfigDumpTables(connectionPool)
+			Expect(tables).To(BeEmpty())
+		})
+		It("returns config dump tables registered via pg_extension_config_dump", func() {
+			// Create a table and simulate pg_extension_config_dump by updating
+			// pg_extension.extconfig directly (the real function can only be
+			// called during CREATE EXTENSION).
+			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.ext_config_test(id int, val text)")
+			defer testhelper.AssertQueryRuns(connectionPool, "DROP TABLE public.ext_config_test")
+
+			// Register the table as a config dump table for plpgsql (always installed)
+			testhelper.AssertQueryRuns(connectionPool, `
+				UPDATE pg_extension
+				SET extconfig = array_append(extconfig, 'public.ext_config_test'::regclass::oid),
+				    extcondition = array_append(extcondition, '')
+				WHERE extname = 'plpgsql'`)
+			defer testhelper.AssertQueryRuns(connectionPool, `
+				UPDATE pg_extension
+				SET extconfig = array_remove(extconfig, 'public.ext_config_test'::regclass::oid),
+				    extcondition = extcondition[1:array_length(extcondition,1)-1]
+				WHERE extname = 'plpgsql'`)
+
+			// Also add a pg_depend entry so the table is "extension-owned"
+			// (which normally causes gpbackup to skip it)
+			testhelper.AssertQueryRuns(connectionPool, `
+				INSERT INTO pg_depend (classid, objid, objsubid, refclassid, refobjid, refobjsubid, deptype)
+				VALUES ('pg_class'::regclass, 'public.ext_config_test'::regclass, 0,
+				        'pg_extension'::regclass, (SELECT oid FROM pg_extension WHERE extname = 'plpgsql'), 0,
+				        'e')`)
+			defer testhelper.AssertQueryRuns(connectionPool, `
+				DELETE FROM pg_depend
+				WHERE objid = 'public.ext_config_test'::regclass AND deptype = 'e'`)
+
+			tables := backup.GetExtensionConfigDumpTables(connectionPool)
+			Expect(tables).To(HaveLen(1))
+			// quote_ident wraps the name; on simple identifiers it's just the bare name
+			Expect(tables[0].Schema).To(Equal("public"))
+			Expect(tables[0].Name).To(Equal("ext_config_test"))
+		})
+	})
 })
