@@ -557,10 +557,10 @@ func GetExtensionConfigDumpTables(connectionPool *dbconn.DBConn) []Table {
 		c.oid AS oid,
 		quote_ident(n.nspname) AS schema,
 		quote_ident(c.relname) AS name
-	FROM pg_extension e,
+	FROM pg_catalog.pg_extension e,
 		unnest(e.extconfig) AS config_oid
-		JOIN pg_class c ON c.oid = config_oid
-		JOIN pg_namespace n ON c.relnamespace = n.oid
+		JOIN pg_catalog.pg_class c ON c.oid = config_oid
+		JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
 	WHERE e.extconfig IS NOT NULL`
 
 	configRelations := make([]Relation, 0)
