@@ -210,21 +210,14 @@ func RetrieveAndProcessTables() ([]Table, []Table) {
 	// Query extension config dump tables early so we can lock them and
 	// include them in the single ConstructDefinitionsForTables call.
 	configDumpRelations, configDumpFilterConds := GetExtensionConfigDumpRelations(connectionPool)
-
-	allRelations := make([]Relation, 0, len(tableRelations)+len(configDumpRelations))
-	allRelations = append(allRelations, tableRelations...)
-	allRelations = append(allRelations, configDumpRelations...)
-
-	LockTables(connectionPool, allRelations)
+	tableRelations = append(tableRelations, configDumpRelations...)
+	LockTables(connectionPool, tableRelations)
 
 	if connectionPool.Version.AtLeast("6") {
 		tableRelations = append(tableRelations, GetForeignTableRelations(connectionPool)...)
 	}
 
-	allRelationsForDefs := make([]Relation, 0, len(tableRelations)+len(configDumpRelations))
-	allRelationsForDefs = append(allRelationsForDefs, tableRelations...)
-	allRelationsForDefs = append(allRelationsForDefs, configDumpRelations...)
-	allTables := ConstructDefinitionsForTables(connectionPool, allRelationsForDefs)
+	allTables := ConstructDefinitionsForTables(connectionPool, tableRelations)
 
 	// Separate config dump tables from regular tables. Config dump tables
 	// are data-only (the extension manages their DDL), so they must not go
