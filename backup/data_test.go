@@ -152,6 +152,20 @@ var _ = Describe("backup/data tests", func() {
 
 			Expect(err).ShouldNot(HaveOccurred())
 		})
+		It("will back up an extension config dump table with a filter condition", func() {
+			utils.SetPipeThroughProgram(utils.PipeThroughProgram{Name: "gzip", OutputCommand: "gzip -c -8", InputCommand: "gzip -d -c", Extension: ".gz"})
+			filteredTable := backup.Table{
+				Relation:        backup.Relation{SchemaOid: 2345, Oid: 3456, Schema: "public", Name: "foo"},
+				TableDefinition: backup.TableDefinition{ExtConfigFilterCond: "WHERE NOT is_default"},
+			}
+			execStr := regexp.QuoteMeta("COPY (SELECT * FROM public.foo WHERE NOT is_default) TO PROGRAM 'gzip -c -8 > <SEG_DATA_DIR>/backups/20170101/20170101010101/gpbackup_<SEGID>_20170101010101_3456.gz' WITH CSV DELIMITER ',' ON SEGMENT IGNORE EXTERNAL PARTITIONS;")
+			mock.ExpectExec(execStr).WillReturnResult(sqlmock.NewResult(10, 0))
+			filename := "<SEG_DATA_DIR>/backups/20170101/20170101010101/gpbackup_<SEGID>_20170101010101_3456.gz"
+
+			_, err := backup.CopyTableOut(connectionPool, filteredTable, filename, defaultConnNum)
+
+			Expect(err).ShouldNot(HaveOccurred())
+		})
 	})
 	Describe("BackupSingleTableData", func() {
 		var (
