@@ -1,0 +1,3 @@
+comment = 'Test extension for pg_extension_config_dump data backup/restore'
+default_version = '1.0'
+relocatable = true
