@@ -557,10 +557,11 @@ PARTITION BY LIST (gender)
 			structmatcher.ExpectStructsToMatchExcluding(&materialView, &results[0], "Oid", "ColumnDefs", "DistPolicy.Oid")
 		})
 	})
-	Describe("GetExtensionConfigDumpTables", func() {
+	Describe("GetExtensionConfigDumpRelations", func() {
 		It("returns empty when no extensions have config dump tables", func() {
-			tables := backup.GetExtensionConfigDumpTables(connectionPool)
-			Expect(tables).To(BeEmpty())
+			relations, filterConds := backup.GetExtensionConfigDumpRelations(connectionPool)
+			Expect(relations).To(BeEmpty())
+			Expect(filterConds).To(BeNil())
 		})
 		It("returns config dump tables registered via pg_extension_config_dump", func() {
 			// Create a table and simulate pg_extension_config_dump by updating
@@ -592,14 +593,14 @@ PARTITION BY LIST (gender)
 				DELETE FROM pg_depend
 				WHERE objid = 'public.ext_config_test'::regclass AND deptype = 'e'`)
 
-			tables := backup.GetExtensionConfigDumpTables(connectionPool)
-			Expect(tables).To(HaveLen(1))
+			relations, filterConds := backup.GetExtensionConfigDumpRelations(connectionPool)
+			Expect(relations).To(HaveLen(1))
 			// quote_ident wraps the name; on simple identifiers it's just the bare name
-			Expect(tables[0].Schema).To(Equal("public"))
-			Expect(tables[0].Name).To(Equal("ext_config_test"))
-			Expect(tables[0].ExtConfigFilterCond).To(Equal(""))
+			Expect(relations[0].Schema).To(Equal("public"))
+			Expect(relations[0].Name).To(Equal("ext_config_test"))
+			Expect(filterConds).To(BeEmpty())
 		})
-		It("propagates extcondition as ExtConfigFilterCond", func() {
+		It("propagates extcondition as filter condition", func() {
 			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.ext_cond_test(id int, val text, is_default bool)")
 			defer testhelper.AssertQueryRuns(connectionPool, "DROP TABLE public.ext_cond_test")
 
@@ -624,11 +625,11 @@ PARTITION BY LIST (gender)
 				DELETE FROM pg_depend
 				WHERE objid = 'public.ext_cond_test'::regclass AND deptype = 'e'`)
 
-			tables := backup.GetExtensionConfigDumpTables(connectionPool)
-			Expect(tables).To(HaveLen(1))
-			Expect(tables[0].Schema).To(Equal("public"))
-			Expect(tables[0].Name).To(Equal("ext_cond_test"))
-			Expect(tables[0].ExtConfigFilterCond).To(Equal("WHERE NOT is_default"))
+			relations, filterConds := backup.GetExtensionConfigDumpRelations(connectionPool)
+			Expect(relations).To(HaveLen(1))
+			Expect(relations[0].Schema).To(Equal("public"))
+			Expect(relations[0].Name).To(Equal("ext_cond_test"))
+			Expect(filterConds[relations[0].Oid]).To(Equal("WHERE NOT is_default"))
 		})
 	})
 })

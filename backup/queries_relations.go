@@ -553,17 +553,23 @@ type configDumpRelation struct {
 	FilterCond string
 }
 
-// GetExtensionConfigDumpTables returns Table objects for tables registered via
-// pg_extension_config_dump. These are extension-owned tables whose data should
-// be backed up (and restored) alongside user data, even though the table DDL
-// is managed by the extension itself.
+// GetExtensionConfigDumpRelations returns Relation objects and their filter
+// conditions for tables registered via pg_extension_config_dump. These are
+// extension-owned tables whose data should be backed up (and restored)
+// alongside user data, even though the table DDL is managed by the extension
+// itself.
 //
 // This mirrors the behavior of pg_dump, which queries pg_extension.extconfig
 // and pg_extension.extcondition to identify config dump tables and applies any
 // filter conditions so that only user-modified rows are dumped. Without the
 // filter, rows inserted by the extension's install script would be duplicated
 // on restore (since CREATE EXTENSION re-inserts them).
-func GetExtensionConfigDumpTables(connectionPool *dbconn.DBConn) []Table {
+//
+// The returned filter conditions map contains entries only for tables that have
+// a non-empty WHERE condition. The caller is responsible for building full
+// Table objects (via ConstructDefinitionsForTables) and attaching the filter
+// conditions as ExtConfigFilterCond.
+func GetExtensionConfigDumpRelations(connectionPool *dbconn.DBConn) ([]Relation, map[uint32]string) {
 	query := fmt.Sprintf(`
 	SELECT n.oid AS schemaoid,
 		c.oid AS oid,
@@ -582,13 +588,11 @@ func GetExtensionConfigDumpTables(connectionPool *dbconn.DBConn) []Table {
 	gplog.FatalOnError(err)
 
 	if len(configRelations) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	gplog.Info("Found %d extension config dump table(s)", len(configRelations))
 
-	// Separate the filter conditions from the relations before passing to
-	// ConstructDefinitionsForTables, which expects plain Relation objects.
 	filterCondByOid := make(map[uint32]string, len(configRelations))
 	plainRelations := make([]Relation, len(configRelations))
 	for i, cr := range configRelations {
@@ -598,16 +602,5 @@ func GetExtensionConfigDumpTables(connectionPool *dbconn.DBConn) []Table {
 		}
 	}
 
-	// Build full Table objects so they can be COPY'd via the normal data backup path.
-	tables := ConstructDefinitionsForTables(connectionPool, plainRelations)
-
-	// Attach the filter conditions so CopyTableOut can emit
-	// COPY (SELECT ... WHERE <cond>) instead of a plain COPY.
-	for i := range tables {
-		if cond, ok := filterCondByOid[tables[i].Oid]; ok {
-			tables[i].ExtConfigFilterCond = cond
-		}
-	}
-
-	return tables
+	return plainRelations, filterCondByOid
 }
