@@ -1942,7 +1942,7 @@ LANGUAGE plpgsql NO SQL;`)
 			It("runs gpbackup and gprestore to backup tables depending on extension with access methods", func() {
 				testutils.SkipIfBefore7(backupConn)
 				testhelper.AssertQueryRuns(backupConn, "CREATE EXTENSION IF NOT EXISTS test_backup;")
-				defer testhelper.AssertQueryRuns(backupConn, "DROP EXTENSION test_backup;")
+				defer testhelper.AssertQueryRuns(backupConn, "DROP EXTENSION IF EXISTS test_backup CASCADE;")
 
 				output := gpbackup(gpbackupPath, backupHelperPath)
 				timestamp := getBackupTimestamp(string(output))

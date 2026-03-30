@@ -82,6 +82,7 @@ type TableDefinition struct {
 	PartitionKeyDef         string
 	AttachPartitionInfo     AttachPartitionInfo
 	ForceRowSecurity        bool
+	ExtConfigFilterCond     string
 }
 
 /*

@@ -73,6 +73,7 @@ integration : build_test $(GINKGO)
 build_test:
 	# build and install test_extension in testutils
 	make -C testutils/test_extension install
+	make -C testutils/test_extension_config_dump install
 
 test : build unit integration
 

@@ -543,3 +543,64 @@ func GenerateTableBatches(tables []Relation, batchSize int) []string {
 
 	return batches
 }
+
+// configDumpRelation extends Relation with the optional WHERE condition from
+// pg_extension_config_dump, used to filter out rows that the extension's
+// install script inserts by default (and that CREATE EXTENSION will re-create
+// on restore).
+type configDumpRelation struct {
+	Relation
+	FilterCond string
+}
+
+// GetExtensionConfigDumpRelations returns Relation objects and their filter
+// conditions for tables registered via pg_extension_config_dump. These are
+// extension-owned tables whose data should be backed up (and restored)
+// alongside user data, even though the table DDL is managed by the extension
+// itself.
+//
+// This mirrors the behavior of pg_dump, which queries pg_extension.extconfig
+// and pg_extension.extcondition to identify config dump tables and applies any
+// filter conditions so that only user-modified rows are dumped. Without the
+// filter, rows inserted by the extension's install script would be duplicated
+// on restore (since CREATE EXTENSION re-inserts them).
+//
+// The returned filter conditions map contains entries only for tables that have
+// a non-empty WHERE condition. The caller is responsible for building full
+// Table objects (via ConstructDefinitionsForTables) and attaching the filter
+// conditions as ExtConfigFilterCond.
+func GetExtensionConfigDumpRelations(connectionPool *dbconn.DBConn) ([]Relation, map[uint32]string) {
+	query := fmt.Sprintf(`
+	SELECT n.oid AS schemaoid,
+		c.oid AS oid,
+		quote_ident(n.nspname) AS schema,
+		quote_ident(c.relname) AS name,
+		COALESCE(cond.filtercond, '') AS filtercond
+	FROM pg_catalog.pg_extension e,
+		unnest(e.extconfig, e.extcondition) AS cond(config_oid, filtercond)
+		JOIN pg_catalog.pg_class c ON c.oid = cond.config_oid
+		JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+	WHERE e.extconfig IS NOT NULL
+		AND %s`, relationAndSchemaFilterClause())
+
+	configRelations := make([]configDumpRelation, 0)
+	err := connectionPool.Select(&configRelations, query)
+	gplog.FatalOnError(err)
+
+	if len(configRelations) == 0 {
+		return nil, nil
+	}
+
+	gplog.Info("Found %d extension config dump table(s)", len(configRelations))
+
+	filterCondByOid := make(map[uint32]string, len(configRelations))
+	plainRelations := make([]Relation, len(configRelations))
+	for i, cr := range configRelations {
+		plainRelations[i] = cr.Relation
+		if cr.FilterCond != "" {
+			filterCondByOid[cr.Relation.Oid] = cr.FilterCond
+		}
+	}
+
+	return plainRelations, filterCondByOid
+}

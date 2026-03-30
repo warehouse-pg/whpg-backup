@@ -207,15 +207,41 @@ func RetrieveAndProcessTables() ([]Table, []Table) {
 	includedRelations := GetIncludedUserTableRelations(connectionPool, IncludedRelationFqns)
 	tableRelations := ConvertRelationsOptionsToBackup(includedRelations)
 
+	// Query extension config dump tables early so we can lock them and
+	// include them in the single ConstructDefinitionsForTables call.
+	configDumpRelations, configDumpFilterConds := GetExtensionConfigDumpRelations(connectionPool)
+	tableRelations = append(tableRelations, configDumpRelations...)
 	LockTables(connectionPool, tableRelations)
 
 	if connectionPool.Version.AtLeast("6") {
 		tableRelations = append(tableRelations, GetForeignTableRelations(connectionPool)...)
 	}
 
-	tables := ConstructDefinitionsForTables(connectionPool, tableRelations)
+	allTables := ConstructDefinitionsForTables(connectionPool, tableRelations)
 
-	metadataTables, dataTables := SplitTablesByPartitionType(tables, IncludedRelationFqns)
+	// Separate config dump tables from regular tables. Config dump tables
+	// are data-only (the extension manages their DDL), so they must not go
+	// through SplitTablesByPartitionType which would add them to metadataTables.
+	configDumpOids := make(map[uint32]bool, len(configDumpRelations))
+	for _, r := range configDumpRelations {
+		configDumpOids[r.Oid] = true
+	}
+
+	regularTables := make([]Table, 0, len(allTables))
+	configDumpTables := make([]Table, 0, len(configDumpRelations))
+	for _, t := range allTables {
+		if configDumpOids[t.Oid] {
+			if cond, ok := configDumpFilterConds[t.Oid]; ok {
+				t.ExtConfigFilterCond = cond
+			}
+			configDumpTables = append(configDumpTables, t)
+		} else {
+			regularTables = append(regularTables, t)
+		}
+	}
+
+	metadataTables, dataTables := SplitTablesByPartitionType(regularTables, IncludedRelationFqns)
+	dataTables = append(dataTables, configDumpTables...)
 	objectCounts["Tables"] = len(metadataTables)
 
 	return metadataTables, dataTables

@@ -94,7 +94,23 @@ func CopyTableOut(connectionPool *dbconn.DBConn, table Table, destinationToWrite
 	if gplog.GetVerbosity() >= gplog.LOGVERBOSE {
 		workerInfo = fmt.Sprintf("Worker %d: ", connNum)
 	}
-	query := fmt.Sprintf("COPY %s%s TO %s WITH CSV DELIMITER '%s' ON SEGMENT IGNORE EXTERNAL PARTITIONS;", table.FQN(), columnNames, copyCommand, tableDelim)
+
+	var query string
+	if table.ExtConfigFilterCond != "" {
+		// Extension config dump tables may have a WHERE condition from
+		// pg_extension_config_dump that filters out rows inserted by the
+		// extension's install script (which CREATE EXTENSION will
+		// re-create on restore). Use COPY (SELECT ...) to apply it.
+		selectCols := "*"
+		if columnNames != "" {
+			// columnNames is "(col1,col2,...)" — strip the parens for SELECT
+			selectCols = columnNames[1 : len(columnNames)-1]
+		}
+		query = fmt.Sprintf("COPY (SELECT %s FROM %s %s) TO %s WITH CSV DELIMITER '%s' ON SEGMENT IGNORE EXTERNAL PARTITIONS;",
+			selectCols, table.FQN(), table.ExtConfigFilterCond, copyCommand, tableDelim)
+	} else {
+		query = fmt.Sprintf("COPY %s%s TO %s WITH CSV DELIMITER '%s' ON SEGMENT IGNORE EXTERNAL PARTITIONS;", table.FQN(), columnNames, copyCommand, tableDelim)
+	}
 	if connectionPool.Version.AtLeast("7") {
 		utils.LogProgress(`%sExecuting "%s" on coordinator`, workerInfo, query)
 	} else {
