@@ -92,7 +92,7 @@ func restoreSingleBatchData(fpInfo *filepath.FilePathInfo, entry toc.Coordinator
 		gplog.Verbose("Truncating table %s prior to restoring data", tableName)
 		_, err := connectionPool.Exec(`TRUNCATE `+tableName, whichConn)
 		if err != nil {
-			gplog.Error(err.Error())
+			gplog.Error("%s", err.Error())
 			return err
 		}
 	}
@@ -125,7 +125,7 @@ func restoreSingleBatchData(fpInfo *filepath.FilePathInfo, entry toc.Coordinator
 	rowProcessedChan <- partialRowsRestored
 
 	if copyErr != nil {
-		gplog.Error(copyErr.Error())
+		gplog.Error("%s", copyErr.Error())
 		if MustGetFlagBool(options.ON_ERROR_CONTINUE) {
 			if connectionPool.Version.AtLeast("6") && backupConfig.SingleDataFile {
 				// inform segment helpers to skip this entry
@@ -156,7 +156,7 @@ func restoreSingleBatchData(fpInfo *filepath.FilePathInfo, entry toc.Coordinator
 
 	err := CheckRowsRestored(numRowsRestored, numRowsBackedUp, tableName)
 	if err != nil {
-		gplog.Error(err.Error())
+		gplog.Error("%s", err.Error())
 		return err
 	}
 
@@ -165,13 +165,13 @@ func restoreSingleBatchData(fpInfo *filepath.FilePathInfo, entry toc.Coordinator
 		if entry.IsReplicated && (origSize < destSize) {
 			err := ExpandReplicatedTable(origSize, tableName, whichConn)
 			if err != nil {
-				gplog.Error(err.Error())
+				gplog.Error("%s", err.Error())
 				return err
 			}
 		} else {
 			err := RedistributeTableData(tableName, whichConn)
 			if err != nil {
-				gplog.Error(err.Error())
+				gplog.Error("%s", err.Error())
 				return err
 			}
 		}

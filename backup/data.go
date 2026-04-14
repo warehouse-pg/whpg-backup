@@ -130,10 +130,8 @@ func BackupSingleTableData(table Table, rowsCopiedMap map[uint32]int64, counters
 	if gplog.GetVerbosity() >= gplog.LOGVERBOSE {
 		workerInfo = fmt.Sprintf("Worker %d: ", whichConn)
 	}
-	logMessage := fmt.Sprintf("%sWriting data for table %s to file", workerInfo, table.FQN())
-	// Avoid race condition by incrementing counters in call to sprintf
-	tableCount := fmt.Sprintf(" (table %d of %d)", atomic.AddInt64(&counters.NumRegTables, 1), counters.TotalRegTables)
-	utils.LogProgress(logMessage + tableCount)
+	// Avoid race condition by incrementing counters in call to LogProgress
+	utils.LogProgress("%sWriting data for table %s to file (table %d of %d)", workerInfo, table.FQN(), atomic.AddInt64(&counters.NumRegTables, 1), counters.TotalRegTables)
 
 	destinationToWrite := ""
 	if MustGetFlagBool(options.SINGLE_DATA_FILE) {
