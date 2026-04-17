@@ -91,7 +91,8 @@ var _ = Describe("Signal handler tests", func() {
 			checkLockQuery := `SELECT count(*) FROM pg_locks l, pg_class c, pg_namespace n WHERE l.relation = c.oid AND n.oid = c.relnamespace AND n.nspname = 'schema2' AND c.relname = 'foo2' AND l.granted = 'f'`
 
 			// Acquire AccessExclusiveLock on schema2.foo2 to prevent gpbackup from acquiring AccessShareLock
-			backupConn.MustExec("BEGIN; LOCK TABLE schema2.foo2 IN ACCESS EXCLUSIVE MODE")
+			backupConn.MustBegin()
+			backupConn.MustExec("LOCK TABLE schema2.foo2 IN ACCESS EXCLUSIVE MODE")
 			args := []string{
 				"--dbname", "testdb",
 				"--backup-dir", backupDir,
@@ -122,7 +123,7 @@ var _ = Describe("Signal handler tests", func() {
 			var afterLockCount int
 			_ = backupConn.Get(&afterLockCount, checkLockQuery)
 			Expect(afterLockCount).To(Equal(0))
-			backupConn.MustExec("ROLLBACK")
+			backupConn.MustRollback()
 
 			stdout := string(output)
 			Expect(stdout).To(ContainSubstring("Received an interrupt signal, aborting backup process"))
@@ -141,7 +142,8 @@ var _ = Describe("Signal handler tests", func() {
 			checkLockQuery := `SELECT count(*) FROM pg_locks l, pg_class c, pg_namespace n WHERE l.relation = c.oid AND n.oid = c.relnamespace AND n.nspname = 'schema2' AND c.relname = 'foo2' AND l.granted = 'f'`
 
 			// Acquire AccessExclusiveLock on schema2.foo2 to prevent gpbackup from acquiring AccessShareLock
-			backupConn.MustExec("BEGIN; LOCK TABLE schema2.foo2 IN ACCESS EXCLUSIVE MODE")
+			backupConn.MustBegin()
+			backupConn.MustExec("LOCK TABLE schema2.foo2 IN ACCESS EXCLUSIVE MODE")
 			args := []string{
 				"--dbname", "testdb",
 				"--backup-dir", backupDir,
@@ -173,7 +175,7 @@ var _ = Describe("Signal handler tests", func() {
 			var afterLockCount int
 			_ = backupConn.Get(&afterLockCount, checkLockQuery)
 			Expect(afterLockCount).To(Equal(0))
-			backupConn.MustExec("ROLLBACK")
+			backupConn.MustRollback()
 
 			stdout := string(output)
 			Expect(stdout).To(ContainSubstring("Received an interrupt signal, aborting backup process"))
@@ -320,7 +322,8 @@ var _ = Describe("Signal handler tests", func() {
 			checkLockQuery := `SELECT count(*) FROM pg_locks l, pg_class c, pg_namespace n WHERE l.relation = c.oid AND n.oid = c.relnamespace AND n.nspname = 'schema2' AND c.relname = 'foo2' AND l.granted = 'f'`
 
 			// Acquire AccessExclusiveLock on schema2.foo2 to prevent gpbackup from acquiring AccessShareLock
-			backupConn.MustExec("BEGIN; LOCK TABLE schema2.foo2 IN ACCESS EXCLUSIVE MODE")
+			backupConn.MustBegin()
+			backupConn.MustExec("LOCK TABLE schema2.foo2 IN ACCESS EXCLUSIVE MODE")
 			args := []string{
 				"--dbname", "testdb",
 				"--backup-dir", backupDir,
@@ -351,7 +354,7 @@ var _ = Describe("Signal handler tests", func() {
 			var afterLockCount int
 			_ = backupConn.Get(&afterLockCount, checkLockQuery)
 			Expect(afterLockCount).To(Equal(0))
-			backupConn.MustExec("ROLLBACK")
+			backupConn.MustRollback()
 
 			stdout := string(output)
 			Expect(stdout).To(ContainSubstring("Received a termination signal, aborting backup process"))
@@ -370,7 +373,8 @@ var _ = Describe("Signal handler tests", func() {
 			checkLockQuery := `SELECT count(*) FROM pg_locks l, pg_class c, pg_namespace n WHERE l.relation = c.oid AND n.oid = c.relnamespace AND n.nspname = 'schema2' AND c.relname = 'foo2' AND l.granted = 'f'`
 
 			// Acquire AccessExclusiveLock on schema2.foo2 to prevent gpbackup from acquiring AccessShareLock
-			backupConn.MustExec("BEGIN; LOCK TABLE schema2.foo2 IN ACCESS EXCLUSIVE MODE")
+			backupConn.MustBegin()
+			backupConn.MustExec("LOCK TABLE schema2.foo2 IN ACCESS EXCLUSIVE MODE")
 			args := []string{
 				"--dbname", "testdb",
 				"--backup-dir", backupDir,
@@ -402,7 +406,7 @@ var _ = Describe("Signal handler tests", func() {
 			var afterLockCount int
 			_ = backupConn.Get(&afterLockCount, checkLockQuery)
 			Expect(afterLockCount).To(Equal(0))
-			backupConn.MustExec("ROLLBACK")
+			backupConn.MustRollback()
 
 			stdout := string(output)
 			Expect(stdout).To(ContainSubstring("Received a termination signal, aborting backup process"))
