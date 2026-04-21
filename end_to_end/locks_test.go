@@ -97,7 +97,8 @@ var _ = Describe("Deadlock handling", func() {
 
 				// Queue an AccessExclusiveLock request on a test table which will later
 				// result in a detected deadlock during the gpbackup data dump section.
-				accessExclusiveLockConn.MustExec(fmt.Sprintf(`BEGIN; LOCK TABLE %s IN ACCESS EXCLUSIVE MODE; COMMIT`, dataTable))
+				accessExclusiveLockConn.MustBegin()
+				accessExclusiveLockConn.MustExec(fmt.Sprintf(`LOCK TABLE %s IN ACCESS EXCLUSIVE MODE; COMMIT`, dataTable))
 			}(dataTable)
 		}
 
@@ -229,7 +230,8 @@ var _ = Describe("Deadlock handling", func() {
 
 				// Queue an AccessExclusiveLock request on a test table which will later
 				// result in a detected deadlock during the gpbackup data dump section.
-				accessExclusiveLockConn.MustExec(fmt.Sprintf(`BEGIN; LOCK TABLE %s IN ACCESS EXCLUSIVE MODE; COMMIT`, dataTable))
+				accessExclusiveLockConn.MustBegin()
+				accessExclusiveLockConn.MustExec(fmt.Sprintf(`LOCK TABLE %s IN ACCESS EXCLUSIVE MODE; COMMIT`, dataTable))
 			}(dataTable)
 		}
 
@@ -363,7 +365,8 @@ var _ = Describe("Deadlock handling", func() {
 				}
 				// Queue an AccessExclusiveLock request on a test table which will later
 				// result in a detected deadlock during the gpbackup data dump section.
-				accessExclusiveLockConn.MustExec(fmt.Sprintf(`BEGIN; LOCK TABLE %s IN ACCESS EXCLUSIVE MODE; COMMIT`, lockedTable))
+				accessExclusiveLockConn.MustBegin()
+				accessExclusiveLockConn.MustExec(fmt.Sprintf(`LOCK TABLE %s IN ACCESS EXCLUSIVE MODE; COMMIT`, lockedTable))
 			}(lockedTable)
 		}
 
