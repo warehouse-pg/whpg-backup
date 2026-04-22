@@ -2012,7 +2012,8 @@ LANGUAGE plpgsql NO SQL;`)
 					Skip("This test is not needed for old backup versions")
 				}
 				// Block on pg_trigger, which gpbackup queries after gp_segment_configuration
-				backupConn.MustExec("BEGIN; LOCK TABLE pg_trigger IN ACCESS EXCLUSIVE MODE")
+				backupConn.MustBegin()
+				backupConn.MustExec("LOCK TABLE pg_trigger IN ACCESS EXCLUSIVE MODE")
 
 				args := []string{
 					"--dbname", "testdb",
@@ -2020,7 +2021,7 @@ LANGUAGE plpgsql NO SQL;`)
 					"--verbose"}
 				cmd := exec.Command(gpbackupPath, args...)
 
-				backupConn.MustExec("COMMIT")
+				backupConn.MustCommit()
 				anotherConn := testutils.SetupTestDbConn("testdb")
 				defer anotherConn.Close()
 				var lockCount int

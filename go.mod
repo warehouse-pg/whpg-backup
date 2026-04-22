@@ -1,6 +1,6 @@
 module github.com/greenplum-db/gpbackup
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
@@ -8,7 +8,7 @@ require (
 	github.com/blang/vfs v1.0.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/greenplum-db/gp-common-go-libs v1.0.19
-	github.com/jackc/pgx/v5 v5.7.4
+	github.com/jackc/pgx/v5 v5.9.0
 	github.com/jmoiron/sqlx v1.3.5
 	github.com/klauspost/compress v1.15.15
 	github.com/lib/pq v1.10.7
@@ -42,7 +42,6 @@ require (
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-runewidth v0.0.13 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
-	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/mod v0.29.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
