@@ -8,7 +8,7 @@ require (
 	github.com/blang/vfs v1.0.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/greenplum-db/gp-common-go-libs v1.0.19
-	github.com/jackc/pgx/v5 v5.9.0
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/jmoiron/sqlx v1.3.5
 	github.com/klauspost/compress v1.15.15
 	github.com/lib/pq v1.10.7
