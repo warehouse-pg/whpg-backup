@@ -415,5 +415,33 @@ var _ = Describe("restore/validate tests", func() {
 				Fail("invalid flag combination passed validation check")
 			}
 		})
+		It("--ignore-plugin-config should pass when the backup was taken with a plugin", func() {
+			restore.SetBackupConfig(&history.BackupConfig{Plugin: "/tmp/gpbackup_fake_plugin"})
+			testCmd := &cobra.Command{
+				Use:  "flag validation",
+				Args: cobra.NoArgs,
+				Run: func(cmd *cobra.Command, args []string) {
+					restore.ValidateBackupFlagCombinations()
+				}}
+			testCmd.SetArgs([]string{"--ignore-plugin-config"})
+			restore.SetCmdFlags(testCmd.Flags())
+
+			err := testCmd.Execute()
+			Expect(err).ToNot(HaveOccurred())
+		})
+		It("--ignore-plugin-config should be a no-op when the backup was not taken with a plugin", func() {
+			restore.SetBackupConfig(&history.BackupConfig{})
+			testCmd := &cobra.Command{
+				Use:  "flag validation",
+				Args: cobra.NoArgs,
+				Run: func(cmd *cobra.Command, args []string) {
+					restore.ValidateBackupFlagCombinations()
+				}}
+			testCmd.SetArgs([]string{"--ignore-plugin-config"})
+			restore.SetCmdFlags(testCmd.Flags())
+
+			err := testCmd.Execute()
+			Expect(err).ToNot(HaveOccurred())
+		})
 	})
 })

@@ -105,6 +105,16 @@ func DoSetup() {
 	gplog.Info("Greenplum Database Version = %s", connectionPool.Version.VersionString)
 
 	BackupConfigurationValidation()
+
+	// If --ignore-plugin-config is set and the backup recorded a plugin,
+	// drop the plugin name so downstream restore code reads files from the
+	// local filesystem instead of invoking the plugin. If no plugin was
+	// recorded the flag is a no-op.
+	if MustGetFlagBool(options.IGNORE_PLUGIN_CONFIG) && backupConfig.Plugin != "" {
+		gplog.Info("Ignoring plugin %s recorded in the backup config; restoring without invoking the plugin.", backupConfig.Plugin)
+		backupConfig.Plugin = ""
+	}
+
 	metadataFilename := globalFPInfo.GetMetadataFilePath()
 	if !backupConfig.DataOnly {
 		gplog.Verbose("Metadata will be restored from %s", metadataFilename)
