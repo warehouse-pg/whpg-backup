@@ -25,6 +25,7 @@ const (
 	EXCLUDE_SCHEMA        = "exclude-schema"
 	EXCLUDE_SCHEMA_FILE   = "exclude-schema-file"
 	FROM_TIMESTAMP        = "from-timestamp"
+	IGNORE_PLUGIN_CONFIG  = "ignore-plugin-config"
 	INCLUDE_RELATION      = "include-table"
 	INCLUDE_RELATION_FILE = "include-table-file"
 	INCLUDE_SCHEMA        = "include-schema"
@@ -110,6 +111,7 @@ func SetRestoreFlagDefaults(flagSet *pflag.FlagSet) {
 	flagSet.Int(JOBS, 1, "Number of parallel connections to use when restoring table data and post-data")
 	flagSet.Bool(ON_ERROR_CONTINUE, false, "Log errors and continue restore, instead of exiting on first error")
 	flagSet.String(PLUGIN_CONFIG, "", "The configuration file to use for a plugin")
+	flagSet.Bool(IGNORE_PLUGIN_CONFIG, false, "Ignore the plugin recorded in the backup config; restore from the local filesystem instead. Use when backup files are reachable directly (e.g. via a BoostFS mount)")
 	flagSet.Bool("version", false, "Print version number and exit")
 	flagSet.Bool(QUIET, false, "Suppress non-warning, non-error log messages")
 	flagSet.String(REDIRECT_DB, "", "Restore to the specified database instead of the database that was backed up")

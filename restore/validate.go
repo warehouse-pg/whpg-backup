@@ -245,6 +245,12 @@ func ValidateBackupFlagCombinations() {
 }
 
 func validateBackupFlagPluginCombinations() {
+	if MustGetFlagBool(options.IGNORE_PLUGIN_CONFIG) {
+		// No-op against a backup taken without a plugin; the flag just means
+		// "do not invoke any plugin during restore", which is already the
+		// case when none was recorded.
+		return
+	}
 	if backupConfig.Plugin != "" && MustGetFlagString(options.PLUGIN_CONFIG) == "" {
 		gplog.Fatal(errors.Errorf("Backup was taken with plugin %s. The --plugin-config flag must be used to restore.", backupConfig.Plugin), "")
 	} else if backupConfig.Plugin == "" && MustGetFlagString(options.PLUGIN_CONFIG) != "" {
@@ -264,6 +270,7 @@ func ValidateFlagCombinations(cmd *cobra.Command) {
 
 	options.CheckExclusiveFlags(flags, options.METADATA_ONLY, options.DATA_ONLY)
 	options.CheckExclusiveFlags(flags, options.PLUGIN_CONFIG, options.BACKUP_DIR)
+	options.CheckExclusiveFlags(flags, options.PLUGIN_CONFIG, options.IGNORE_PLUGIN_CONFIG)
 	options.CheckExclusiveFlags(flags, options.TRUNCATE_TABLE, options.METADATA_ONLY, options.INCREMENTAL)
 	options.CheckExclusiveFlags(flags, options.TRUNCATE_TABLE, options.REDIRECT_SCHEMA)
 

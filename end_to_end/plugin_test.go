@@ -11,10 +11,36 @@ import (
 	"github.com/greenplum-db/gp-common-go-libs/iohelper"
 	"github.com/greenplum-db/gp-common-go-libs/testhelper"
 	"github.com/greenplum-db/gpbackup/filepath"
+	"github.com/greenplum-db/gpbackup/history"
 	"github.com/greenplum-db/gpbackup/testutils"
 	"github.com/greenplum-db/gpbackup/utils"
 	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
+
+// patchConfigPluginField rewrites the backup config yaml emitted by gpbackup
+// so the recorded plugin field is set to fakePluginPath, simulating a backup
+// originally produced via a plugin (e.g. gpbackup_ddboost_plugin) without
+// requiring the plugin to actually be installed. Goes through the history
+// package so the yaml stays canonical (single plugin: key, etc.).
+func patchConfigPluginField(backupDir, timestamp, fakePluginPath string) string {
+	pattern := path.Join(backupDir, "*-1", "backups", timestamp[:8], timestamp,
+		fmt.Sprintf("gpbackup_%s_config.yaml", timestamp))
+	matches, err := path.Glob(pattern)
+	Expect(err).ToNot(HaveOccurred())
+	if len(matches) == 0 {
+		matches, err = path.Glob(path.Join(backupDir, "backups", timestamp[:8], timestamp,
+			fmt.Sprintf("gpbackup_%s_config.yaml", timestamp)))
+		Expect(err).ToNot(HaveOccurred())
+	}
+	Expect(matches).To(HaveLen(1))
+	configPath := matches[0]
+
+	cfg := history.ReadConfigFile(configPath)
+	cfg.Plugin = fakePluginPath
+	history.WriteConfigFile(cfg, configPath)
+	return configPath
+}
 
 func copyPluginToAllHosts(conn *dbconn.DBConn, pluginPath string) {
 	hostnameQuery := `SELECT DISTINCT hostname AS string FROM gp_segment_configuration WHERE content != -1`
@@ -477,6 +503,75 @@ var _ = Describe("End to End plugin tests", func() {
 			copyPluginToAllHosts(backupConn, examplePluginExec)
 			command := exec.Command("bash", "-c", fmt.Sprintf("%s/plugin_test.sh %s %s", examplePluginDir, examplePluginExec, examplePluginTestConfig))
 			mustRunCommand(command)
+		})
+	})
+
+	Describe("--ignore-plugin-config", func() {
+		// These tests cover the scenario where a backup was originally taken
+		// with a plugin (e.g. ddboost) but the resulting files are reachable
+		// on a regular filesystem (e.g. via a BoostFS mount). The recorded
+		// plugin name is forced into the config yaml to mimic this without
+		// requiring a real plugin to be installed.
+		const fakePluginPath = "/tmp/gpbackup_fake_plugin"
+		var timestamp string
+
+		BeforeEach(func() {
+			output := gpbackup(gpbackupPath, backupHelperPath,
+				"--backup-dir", backupDir)
+			timestamp = getBackupTimestamp(string(output))
+		})
+
+		It("restores a backup that was taken with a plugin when --ignore-plugin-config is set", func() {
+			patchConfigPluginField(backupDir, timestamp, fakePluginPath)
+
+			gprestore(gprestorePath, restoreHelperPath, timestamp,
+				"--redirect-db", "restoredb",
+				"--backup-dir", backupDir,
+				"--ignore-plugin-config")
+
+			assertRelationsCreated(restoreConn, TOTAL_RELATIONS)
+			assertDataRestored(restoreConn, publicSchemaTupleCounts)
+			assertDataRestored(restoreConn, schema2TupleCounts)
+			assertArtifactsCleaned(timestamp)
+		})
+
+		It("fails to restore a backup that was taken with a plugin without --ignore-plugin-config or --plugin-config", func() {
+			patchConfigPluginField(backupDir, timestamp, fakePluginPath)
+
+			cmd := exec.Command(gprestorePath,
+				"--verbose",
+				"--timestamp", timestamp,
+				"--redirect-db", "restoredb",
+				"--backup-dir", backupDir)
+			out, err := cmd.CombinedOutput()
+			Expect(err).To(HaveOccurred())
+			Expect(string(out)).To(ContainSubstring(
+				fmt.Sprintf("Backup was taken with plugin %s. The --plugin-config flag must be used to restore.", fakePluginPath)))
+		})
+
+		It("rejects --ignore-plugin-config combined with --plugin-config", func() {
+			cmd := exec.Command(gprestorePath,
+				"--verbose",
+				"--timestamp", timestamp,
+				"--redirect-db", "restoredb",
+				"--backup-dir", backupDir,
+				"--plugin-config", examplePluginTestConfig,
+				"--ignore-plugin-config")
+			out, err := cmd.CombinedOutput()
+			Expect(err).To(HaveOccurred())
+			Expect(string(out)).To(ContainSubstring("plugin-config, ignore-plugin-config"))
+		})
+
+		It("is a no-op when --ignore-plugin-config is used on a backup taken without a plugin", func() {
+			gprestore(gprestorePath, restoreHelperPath, timestamp,
+				"--redirect-db", "restoredb",
+				"--backup-dir", backupDir,
+				"--ignore-plugin-config")
+
+			assertRelationsCreated(restoreConn, TOTAL_RELATIONS)
+			assertDataRestored(restoreConn, publicSchemaTupleCounts)
+			assertDataRestored(restoreConn, schema2TupleCounts)
+			assertArtifactsCleaned(timestamp)
 		})
 	})
 })
