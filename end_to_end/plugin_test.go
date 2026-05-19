@@ -38,6 +38,10 @@ func patchConfigPluginField(backupDir, timestamp, fakePluginPath string) string 
 
 	cfg := history.ReadConfigFile(configPath)
 	cfg.Plugin = fakePluginPath
+	// gpbackup leaves the config file read-only (0444); WriteConfigFile
+	// silently swallows the resulting EACCES on overwrite. Restore write
+	// permission first so the patch actually lands on disk.
+	Expect(os.Chmod(configPath, 0644)).To(Succeed())
 	history.WriteConfigFile(cfg, configPath)
 	return configPath
 }
@@ -550,11 +554,12 @@ var _ = Describe("End to End plugin tests", func() {
 		})
 
 		It("rejects --ignore-plugin-config combined with --plugin-config", func() {
+			// --backup-dir is intentionally omitted: it is also mutually
+			// exclusive with --plugin-config, and that check fires first.
 			cmd := exec.Command(gprestorePath,
 				"--verbose",
 				"--timestamp", timestamp,
 				"--redirect-db", "restoredb",
-				"--backup-dir", backupDir,
 				"--plugin-config", examplePluginTestConfig,
 				"--ignore-plugin-config")
 			out, err := cmd.CombinedOutput()
