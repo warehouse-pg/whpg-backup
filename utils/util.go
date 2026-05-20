@@ -177,7 +177,7 @@ func InitializeSignalHandler(cleanupFunc func(bool), procDesc string, termFlag *
 // TODO: Uniquely identify COPY commands in the multiple data file case to allow terminating sessions
 func TerminateHangingCopySessions(fpInfo filepath.FilePathInfo, appName string, timeout time.Duration, interval time.Duration) {
 	gplog.Verbose("Checking for leftover COPY sessions")
-	var pidCol, queryCol string
+	var pidCol, queryCol, stateClause string
 
 	termConn := dbconn.NewDBConnFromEnvironment("postgres")
 	termConn.MustConnect(1)
@@ -186,22 +186,42 @@ func TerminateHangingCopySessions(fpInfo filepath.FilePathInfo, appName string, 
 	if termConn.Version.Before("6") {
 		pidCol = "procpid"
 		queryCol = "current_query"
+		stateClause = ""
 	} else {
 		pidCol = "pid"
 		queryCol = "query"
+		// Use pg_cancel_backend (not pg_terminate_backend) to stop the COPY
+		// without tearing down the backend's client connection. Termination
+		// makes pgx surface driver.ErrBadConn, which causes database/sql's
+		// (*DB).retry to silently re-issue the COPY on a fresh connection;
+		// the orphaned re-issued COPY then holds the table's lock and
+		// deadlocks any subsequent DDL. Cancel raises an ordinary query
+		// error instead, leaving the connection alive and idle.
+		// Pair this with `state = 'active'` so the count query stops
+		// matching once the COPY has been canceled (the canceled session
+		// stays around as idle with its prior query text still visible).
+		stateClause = "AND state = 'active'"
 	}
 
 	copyFileName := fpInfo.GetSegmentPipePathForCopyCommand()
 	fromClause := fmt.Sprintf(`FROM pg_stat_activity
 	WHERE application_name = '%s'
 	AND %s LIKE '%%%s%%'
-	AND %s <> pg_backend_pid()`, appName, queryCol, copyFileName, pidCol)
+	AND %s <> pg_backend_pid()
+	%s`, appName, queryCol, copyFileName, pidCol, stateClause)
 
 	tickerTerminate := time.NewTicker(interval)
 	tickerCount := time.NewTicker(interval / 5)
 
+	terminator := "pg_cancel_backend"
+	if termConn.Version.Before("6") {
+		// pg_cancel_backend exists in GPDB 5 but the WHERE-clause uses
+		// procpid/current_query and no state column; keep the legacy
+		// terminate behavior for the 5 path until it is exercised.
+		terminator = "pg_terminate_backend"
+	}
 	termQuery := fmt.Sprintf(`SELECT
-		pg_terminate_backend(%s) %s`, pidCol, fromClause)
+		%s(%s) %s`, terminator, pidCol, fromClause)
 
 	countQuery := fmt.Sprintf(`SELECT
 		count(*) %s`, fromClause)

@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -42,15 +43,29 @@ var _ = Describe("utils integration", func() {
 		Expect(err).To(Not(HaveOccurred()))
 		defer os.Remove(testPipe)
 		go func() {
+			// Use *sql.Conn instead of *sql.DB so database/sql cannot
+			// silently retry the COPY on a fresh connection if the backend
+			// is torn down — that retry spawns an orphan COPY that holds
+			// public.foo's lock and deadlocks the deferred DROP TABLE.
+			ctx := context.Background()
+			sqlConn, cErr := conn.ConnPool[0].Conn(ctx)
+			if cErr != nil {
+				return
+			}
+			defer sqlConn.Close()
 			copyFileName := fpInfo.GetSegmentPipePathForCopyCommand()
-			// COPY will blcok because there is no reader for the testPipe
-			_, _ = conn.Exec(fmt.Sprintf("COPY public.foo TO PROGRAM 'echo %s > /dev/null; cat - > %s' WITH CSV DELIMITER ','", copyFileName, testPipe))
+			// COPY will block because there is no reader for the testPipe
+			_, _ = sqlConn.ExecContext(ctx, fmt.Sprintf("COPY public.foo TO PROGRAM 'echo %s > /dev/null; cat - > %s' WITH CSV DELIMITER ','", copyFileName, testPipe))
 		}()
 
-		query := `SELECT count(*) FROM pg_stat_activity WHERE application_name = 'hangingApplication'`
+		// Match an active COPY only. After TerminateHangingCopySessions
+		// cancels the COPY the session stays alive as idle (with the COPY
+		// query still visible in pg_stat_activity.query), so the filter
+		// must include state = 'active' to ever reach 0.
+		query := `SELECT count(*) FROM pg_stat_activity WHERE application_name = 'hangingApplication' AND state = 'active'`
 		Eventually(func() string { return dbconn.MustSelectString(connectionPool, query) }, 5*time.Second, 100*time.Millisecond).Should(Equal("1"))
 
-		utils.TerminateHangingCopySessions(fpInfo, "hangingApplication", 30 * time.Second, 1 * time.Second)
+		utils.TerminateHangingCopySessions(fpInfo, "hangingApplication", 30*time.Second, 1*time.Second)
 
 		Eventually(func() string { return dbconn.MustSelectString(connectionPool, query) }, 5*time.Second, 100*time.Millisecond).Should(Equal("0"))
 
