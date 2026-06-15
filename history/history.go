@@ -14,15 +14,33 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+type AuxTableID int
+
+// const auxiliary tables
+const (
+	ExcludeSchemas AuxTableID = iota
+	ExcludeRelations
+	IncludeSchemas
+	IncludeRelations
+)
+
+// Fixed auxiliary table names to avoid SQL injection, caller only will get table names in this var
+var auxTableName = map[AuxTableID]string{
+	ExcludeSchemas:   "exclude_schemas",
+	ExcludeRelations: "exclude_relations",
+	IncludeSchemas:   "include_schemas",
+	IncludeRelations: "include_relations",
+}
+
 type RestorePlanEntry struct {
 	Timestamp string
 	TableFQNs []string
 }
 
 const (
-    BackupStatusInProgress = "In Progress"
-	BackupStatusSucceed = "Success"
-	BackupStatusFailed  = "Failure"
+	BackupStatusInProgress = "In Progress"
+	BackupStatusSucceed    = "Success"
+	BackupStatusFailed     = "Failure"
 )
 
 type BackupConfig struct {
@@ -345,7 +363,24 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 	return backupConfig, err
 }
 
-func getAuxTable(db *sql.DB, timestamp, tableName string) ([]string, error) {
+func getAuxTableName(t_id AuxTableID) (string, error) {
+	switch t_id {
+	case ExcludeSchemas:
+	case ExcludeRelations:
+	case IncludeSchemas:
+	case IncludeRelations:
+		return auxTableName[t_id], nil
+	default:
+		break
+	}
+	return "", fmt.Errorf("Unknown auxiliary table: %d", t_id)
+}
+
+func getAuxTable(db *sql.DB, timestamp string, t_id AuxTableID) ([]string, error) {
+	tableName, err := getAuxTableName(t_id)
+	if err != nil {
+		return nil, err
+	}
 	getAuxTableQuery := fmt.Sprintf("SELECT name FROM %s WHERE timestamp = ?", tableName)
 	auxTableRows, err := db.Query(getAuxTableQuery, timestamp)
 	if err != nil {
@@ -373,22 +408,22 @@ func GetBackupConfig(timestamp string, historyDB *sql.DB) (*BackupConfig, error)
 		return nil, err
 	}
 
-	backupConfig.ExcludeSchemas, err = getAuxTable(historyDB, timestamp, "exclude_schemas")
+	backupConfig.ExcludeSchemas, err = getAuxTable(historyDB, timestamp, ExcludeSchemas)
 	if err != nil {
 		return nil, err
 	}
 
-	backupConfig.ExcludeRelations, err = getAuxTable(historyDB, timestamp, "exclude_relations")
+	backupConfig.ExcludeRelations, err = getAuxTable(historyDB, timestamp, ExcludeRelations)
 	if err != nil {
 		return nil, err
 	}
 
-	backupConfig.IncludeSchemas, err = getAuxTable(historyDB, timestamp, "include_schemas")
+	backupConfig.IncludeSchemas, err = getAuxTable(historyDB, timestamp, IncludeSchemas)
 	if err != nil {
 		return nil, err
 	}
 
-	backupConfig.IncludeRelations, err = getAuxTable(historyDB, timestamp, "include_relations")
+	backupConfig.IncludeRelations, err = getAuxTable(historyDB, timestamp, IncludeRelations)
 	if err != nil {
 		return nil, err
 	}
