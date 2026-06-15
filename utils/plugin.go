@@ -73,7 +73,7 @@ func ReadPluginConfig(configFile string) (*PluginConfig, error) {
 func (plugin *PluginConfig) BackupFile(filenamePath string) error {
 	command := fmt.Sprintf("%s backup_file %s %s", plugin.ExecutablePath, plugin.ConfigPath, filenamePath)
 	gplog.Debug("%s", command)
-	output, err := exec.Command("bash", "-c", command).CombinedOutput()
+	output, err := exec.Command(plugin.ExecutablePath, "backup_file", plugin.ConfigPath, filenamePath).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ERROR: Plugin failed to process %s. %s", filenamePath, string(output))
 	}
@@ -92,7 +92,7 @@ func (plugin *PluginConfig) MustRestoreFile(filenamePath string) {
 	gplog.FatalOnError(err)
 	command := fmt.Sprintf("%s restore_file %s %s", plugin.ExecutablePath, plugin.ConfigPath, filenamePath)
 	gplog.Debug("%s", command)
-	output, err := exec.Command("bash", "-c", command).CombinedOutput()
+	output, err := exec.Command(plugin.ExecutablePath, "restore_file", plugin.ConfigPath, filenamePath).CombinedOutput()
 	gplog.FatalOnError(err, string(output))
 }
 
