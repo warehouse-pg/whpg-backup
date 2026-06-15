@@ -365,10 +365,7 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 
 func getAuxTableName(t_id AuxTableID) (string, error) {
 	switch t_id {
-	case ExcludeSchemas:
-	case ExcludeRelations:
-	case IncludeSchemas:
-	case IncludeRelations:
+	case ExcludeSchemas, ExcludeRelations, IncludeSchemas, IncludeRelations:
 		return auxTableName[t_id], nil
 	default:
 		break
