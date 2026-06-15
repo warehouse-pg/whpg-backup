@@ -161,8 +161,7 @@ func startBackupPluginCommand() (*exec.Cmd, io.WriteCloser, error) {
 		// error logging handled by calling functions
 		return nil, nil, err
 	}
-	cmdStr := fmt.Sprintf("%s backup_data %s %s", pluginConfig.ExecutablePath, pluginConfig.ConfigPath, *dataFile)
-	writeCmd := exec.Command("bash", "-c", cmdStr)
+	writeCmd := exec.Command(pluginConfig.ExecutablePath, "backup_data", pluginConfig.ConfigPath, *dataFile)
 
 	writeHandle, err := writeCmd.StdinPipe()
 	if err != nil {
