@@ -311,6 +311,7 @@ func restorePredata(metadataFilename string) {
 		schemaStatements = GetRestoreMetadataStatementsFiltered("predata", metadataFilename, []string{toc.OBJ_SCHEMA}, []string{}, filters)
 	}
 	statements := GetRestoreMetadataStatementsFiltered("predata", metadataFilename, []string{}, []string{toc.OBJ_SCHEMA}, filters)
+	statements = filterExcludedExtensionStatements(statements, opts.ExcludedExtensions)
 
 	editStatementsRedirectSchema(statements, opts.RedirectSchema)
 	progressBar := utils.NewProgressBar(len(schemaStatements)+len(statements), "Pre-data objects restored: ", utils.PB_VERBOSE)
@@ -413,6 +414,33 @@ func restoreSequenceValues(metadataFilename string) {
 	} else {
 		gplog.Info("Sequence values restore complete")
 	}
+}
+
+// filterExcludedExtensionStatements removes any pre-data statement that belongs
+// to an extension named in excludedExtensions. This includes the CREATE EXTENSION
+// statement itself as well as its associated metadata (COMMENT, ACL) entries,
+// which the TOC records with ObjectType "EXTENSION" and the extension's name.
+//
+// This allows a restore to succeed against a target cluster where an extension's
+// control file is not installed (e.g. the OS-level package is missing), which
+// otherwise causes gprestore to abort with:
+//
+//	ERROR: could not open extension control file ".../<ext>.control" (SQLSTATE 58P01)
+func filterExcludedExtensionStatements(statements []toc.StatementWithType, excludedExtensions []string) []toc.StatementWithType {
+	if len(excludedExtensions) == 0 {
+		return statements
+	}
+
+	excludeSet := utils.NewSet(excludedExtensions)
+	filtered := make([]toc.StatementWithType, 0, len(statements))
+	for _, statement := range statements {
+		if statement.ObjectType == toc.OBJ_EXTENSION && excludeSet.MatchesFilter(statement.Name) {
+			gplog.Info("Skipping restore of extension %q and its metadata due to --%s", statement.Name, options.EXCLUDE_EXTENSION)
+			continue
+		}
+		filtered = append(filtered, statement)
+	}
+	return filtered
 }
 
 func editStatementsRedirectSchema(statements []toc.StatementWithType, redirectSchema string) {

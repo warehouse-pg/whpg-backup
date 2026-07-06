@@ -181,6 +181,12 @@ func BackupConfigurationValidation() {
 
 	ValidateBackupFlagCombinations()
 
+	// Fold any --exclude-extension into the excluded-schema filter so that
+	// extension-owned schemas (and their config-dump tables/data) are skipped
+	// automatically. Must run before validateFilterListsInBackupSet so the
+	// injected schemas are validated alongside user-provided ones.
+	ExpandExcludedExtensionsToSchemas()
+
 	validateFilterListsInBackupSet()
 }
 
