@@ -211,7 +211,7 @@ includetablefiltered: false
 incremental: false
 leafpartitiondata: false
 metadataonly: false
-plugin: pluginDir
+plugin: $pluginDir
 pluginversion: "99.99.9999"
 restoreplan:
 - timestamp: "20180415154238"
