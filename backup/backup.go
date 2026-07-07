@@ -434,6 +434,12 @@ func DoTeardown() {
 			}
 			backupReport.ConstructBackupParamsString()
 
+			totalObjectCount := 0
+			for _, count := range objectCounts {
+				totalObjectCount += count
+			}
+			backupReport.BackupConfig.ObjectCount = totalObjectCount
+
 			history.WriteConfigFile(&backupReport.BackupConfig, configFilename)
 			// We always want to override the initial end time set by the call to StoreBackupHistory
 			backupReport.BackupConfig.EndTime = history.CurrentTimestamp()
@@ -516,7 +522,7 @@ func DoCleanup(backupFailed bool) {
 		if err != nil {
 			gplog.Error("Unable to update history database.  Error: %v", err)
 		} else {
-			_, err := historyDB.Exec(fmt.Sprintf("UPDATE backups SET status='%s', end_time='%s' WHERE timestamp='%s'", statusString, backupReport.BackupConfig.EndTime, globalFPInfo.Timestamp))
+			_, err := historyDB.Exec(fmt.Sprintf("UPDATE backups SET status='%s', end_time='%s', object_count=%d WHERE timestamp='%s'", statusString, backupReport.BackupConfig.EndTime, backupReport.BackupConfig.ObjectCount, globalFPInfo.Timestamp))
 			historyDB.Close()
 			if err != nil {
 				gplog.Error("Unable to update history database.  Error: %v", err)
