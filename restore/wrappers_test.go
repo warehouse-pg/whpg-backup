@@ -1,6 +1,7 @@
 package restore_test
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -192,7 +193,7 @@ options:
 			WithStatistics:        false,
 		}
 
-		sampleBackupConfig := `
+		sampleBackupConfig := fmt.Sprintf(`
 backupdir: ""
 backupversion: 1.11.0+dev.28.g10571fd
 compressed: false
@@ -211,7 +212,7 @@ includetablefiltered: false
 incremental: false
 leafpartitiondata: false
 metadataonly: false
-plugin: $pluginDir
+plugin: %s
 pluginversion: "99.99.9999"
 restoreplan:
 - timestamp: "20180415154238"
@@ -220,7 +221,7 @@ tablefqns:
 singledatafile: true
 timestamp: "20180415154238"
 withstatistics: false
-`
+`, pluginDir)
 		var executor testhelper.TestExecutor
 		var testConfigPath = "/tmp/unit_test_plugin_config.yml"
 		var oldWd string
