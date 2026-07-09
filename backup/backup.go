@@ -516,7 +516,7 @@ func DoCleanup(backupFailed bool) {
 		if err != nil {
 			gplog.Error("Unable to update history database.  Error: %v", err)
 		} else {
-			_, err := historyDB.Exec(fmt.Sprintf("UPDATE backups SET status='%s', end_time='%s' WHERE timestamp='%s'", statusString, backupReport.BackupConfig.EndTime, globalFPInfo.Timestamp))
+			_, err := historyDB.Exec("UPDATE backups SET status = ?, end_time = ? WHERE timestamp = ?", statusString, backupReport.BackupConfig.EndTime, globalFPInfo.Timestamp)
 			historyDB.Close()
 			if err != nil {
 				gplog.Error("Unable to update history database.  Error: %v", err)
