@@ -1,6 +1,7 @@
 package history_test
 
 import (
+	"database/sql"
 	"os"
 	"testing"
 	"time"
@@ -104,6 +105,93 @@ var _ = Describe("backup/history tests", func() {
 			Expect(tableName).To(Equal("dummy"))
 
 		})
+
+		It("adds single_backup_dir, command_line, and object_count to a backups table that predates them", func() {
+			// Simulate a gpbackup_history.db created before this ticket's columns existed, since
+			// CREATE TABLE IF NOT EXISTS is a no-op against a pre-existing backups table and would
+			// otherwise leave old databases without these columns.
+			legacyDB, err := sql.Open("sqlite3", historyDBPath)
+			Expect(err).To(BeNil())
+			_, err = legacyDB.Exec(`
+				CREATE TABLE backups (
+					timestamp TEXT NOT NULL PRIMARY KEY,
+					backup_dir TEXT,
+					backup_version TEXT,
+					compressed INT CHECK (compressed in (0,1)),
+					compression_type TEXT,
+					database_name TEXT,
+					database_version TEXT,
+					segment_count INT,
+					data_only INT CHECK (data_only in (0,1)),
+					date_deleted TEXT,
+					exclude_schema_filtered INT CHECK (exclude_schema_filtered in (0,1)),
+					exclude_table_filtered INT CHECK (exclude_table_filtered in (0,1)),
+					include_schema_filtered INT CHECK (include_schema_filtered in (0,1)),
+					include_table_filtered INT CHECK (include_table_filtered in (0,1)),
+					incremental INT CHECK (incremental in (0,1)),
+					leaf_partition_data INT CHECK (leaf_partition_data in (0,1)),
+					metadata_only INT CHECK (metadata_only in (0,1)),
+					plugin TEXT,
+					plugin_version TEXT,
+					single_data_file INT CHECK (single_data_file in (0,1)),
+					end_time TEXT,
+					without_globals INT CHECK (without_globals in (0,1)),
+					with_statistics INT CHECK (with_statistics in (0,1)),
+					status TEXT
+				);`)
+			Expect(err).To(BeNil())
+			_, err = legacyDB.Exec("INSERT INTO backups (timestamp, backup_dir, database_name, status) VALUES ('legacyts', '/data/backups', 'legacydb', 'Success')")
+			Expect(err).To(BeNil())
+			Expect(legacyDB.Close()).To(BeNil())
+
+			migratedDB, err := history.InitializeHistoryDatabase(historyDBPath)
+			Expect(err).To(BeNil())
+			defer migratedDB.Close()
+
+			columnRows, err := migratedDB.Query("PRAGMA table_info(backups);")
+			Expect(err).To(BeNil())
+			columnNames := make(map[string]bool)
+			for columnRows.Next() {
+				var cid, notNull, pk int
+				var name, colType string
+				var dfltValue sql.NullString
+				err = columnRows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk)
+				Expect(err).To(BeNil())
+				columnNames[name] = true
+			}
+			Expect(columnRows.Close()).To(BeNil())
+			Expect(columnNames).To(HaveKey("single_backup_dir"))
+			Expect(columnNames).To(HaveKey("command_line"))
+			Expect(columnNames).To(HaveKey("object_count"))
+
+			// The pre-existing row must survive the migration untouched.
+			legacyRow := migratedDB.QueryRow("SELECT database_name, status FROM backups WHERE timestamp = 'legacyts'")
+			var dbName, status string
+			err = legacyRow.Scan(&dbName, &status)
+			Expect(err).To(BeNil())
+			Expect(dbName).To(Equal("legacydb"))
+			Expect(status).To(Equal("Success"))
+
+			// A backup stored after migration should round-trip through the newly added columns.
+			migratedConfig := history.BackupConfig{
+				DatabaseName:     "testdb1",
+				ExcludeRelations: []string{},
+				ExcludeSchemas:   []string{},
+				IncludeRelations: []string{},
+				IncludeSchemas:   []string{},
+				RestorePlan:      []history.RestorePlanEntry{},
+				Timestamp:        "migratedts",
+				SingleBackupDir:  true,
+				CommandLine:      "gpbackup --dbname testdb1 --single-backup-dir",
+				ObjectCount:      7,
+			}
+			err = history.StoreBackupHistory(migratedDB, &migratedConfig)
+			Expect(err).To(BeNil())
+
+			config, err := history.GetBackupConfig("migratedts", migratedDB)
+			Expect(err).To(BeNil())
+			Expect(config).To(structmatcher.MatchStruct(migratedConfig))
+		})
 	})
 
 	Describe("StoreBackupHistory", func() {
@@ -180,6 +268,37 @@ var _ = Describe("backup/history tests", func() {
 			config, err := history.GetBackupConfig(testConfig2.Timestamp, db)
 			Expect(err).To(BeNil())
 			Expect(config).To(structmatcher.MatchStruct(testConfig2))
+		})
+
+		It("round-trips single_backup_dir, command_line, and object_count", func() {
+			testConfig1.SingleBackupDir = true
+			testConfig1.CommandLine = "gpbackup --dbname testdb1 --single-backup-dir --backup-dir /backups"
+			testConfig1.ObjectCount = 123
+
+			db, _ := history.InitializeHistoryDatabase(historyDBPath)
+			defer db.Close()
+			err := history.StoreBackupHistory(db, &testConfig1)
+			Expect(err).To(BeNil())
+
+			config, err := history.GetBackupConfig(testConfig1.Timestamp, db)
+			Expect(err).To(BeNil())
+			Expect(config).To(structmatcher.MatchStruct(testConfig1))
+			Expect(config.SingleBackupDir).To(BeTrue())
+			Expect(config.CommandLine).To(Equal(testConfig1.CommandLine))
+			Expect(config.ObjectCount).To(Equal(123))
+		})
+
+		It("defaults single_backup_dir, command_line, and object_count to their zero values", func() {
+			db, _ := history.InitializeHistoryDatabase(historyDBPath)
+			defer db.Close()
+			err := history.StoreBackupHistory(db, &testConfig1)
+			Expect(err).To(BeNil())
+
+			config, err := history.GetBackupConfig(testConfig1.Timestamp, db)
+			Expect(err).To(BeNil())
+			Expect(config.SingleBackupDir).To(BeFalse())
+			Expect(config.CommandLine).To(Equal(""))
+			Expect(config.ObjectCount).To(Equal(0))
 		})
 	})
 })
