@@ -69,22 +69,18 @@ func GetLatestMatchingBackupConfig(historyDBPath string, currentBackupConfig *hi
 
 	historyDB, _ := history.InitializeHistoryDatabase(historyDBPath)
 
-	whereClause := fmt.Sprintf(`backup_dir = '%s' AND database_name = '%s' AND leaf_partition_data = %v
-		AND plugin = '%s' AND single_data_file = %v AND compressed = %v AND date_deleted = '' AND status = '%s'`,
-		MustGetFlagString(options.BACKUP_DIR),
-		currentBackupConfig.DatabaseName,
-		MustGetFlagBool(options.LEAF_PARTITION_DATA),
-		currentBackupConfig.Plugin,
-		MustGetFlagBool(options.SINGLE_DATA_FILE),
-		currentBackupConfig.Compressed,
-        history.BackupStatusSucceed)
+	whereClause := `backup_dir = ? AND database_name = ? AND leaf_partition_data = ?
+		AND plugin = ? AND single_data_file = ? AND compressed = ? AND date_deleted = '' AND status = ?`
 
 	getBackupTimetampsQuery := fmt.Sprintf(`
 		SELECT timestamp
 		FROM backups
 		WHERE %s
 		ORDER BY timestamp DESC`, whereClause)
-	timestampRows, err := historyDB.Query(getBackupTimetampsQuery)
+	timestampRows, err := historyDB.Query(getBackupTimetampsQuery, MustGetFlagString(options.BACKUP_DIR),
+		currentBackupConfig.DatabaseName, MustGetFlagBool(options.LEAF_PARTITION_DATA),
+		currentBackupConfig.Plugin, MustGetFlagBool(options.SINGLE_DATA_FILE),
+		currentBackupConfig.Compressed, history.BackupStatusSucceed)
 	if err != nil {
 		gplog.Error("%s", err.Error())
 		return nil

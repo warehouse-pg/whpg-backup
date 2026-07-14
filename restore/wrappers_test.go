@@ -1,6 +1,7 @@
 package restore_test
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -117,6 +118,11 @@ var _ = Describe("wrapper tests", func() {
 
 	})
 	Describe("restore history tests", func() {
+		var pluginDir string
+		BeforeEach(func() {
+			pluginDir = GinkgoT().TempDir()
+		})
+
 		sampleConfigContents := `
 executablepath: /bin/echo
 options:
@@ -154,7 +160,7 @@ options:
 			Incremental:           false,
 			LeafPartitionData:     false,
 			MetadataOnly:          false,
-			Plugin:                "/Users/pivotal/workspace/gp-backup-ddboost-plugin/gpbackup_ddboost_plugin",
+			Plugin:                pluginDir,
 			RestorePlan:           []history.RestorePlanEntry{{Timestamp: "20170415154408", TableFQNs: []string{"public.test_table"}}},
 			SingleDataFile:        false,
 			Timestamp:             "20170415154408",
@@ -179,7 +185,7 @@ options:
 			Incremental:           false,
 			LeafPartitionData:     false,
 			MetadataOnly:          false,
-			Plugin:                "/Users/pivotal/workspace/gp-backup-ddboost-plugin/gpbackup_ddboost_plugin",
+			Plugin:                pluginDir,
 			PluginVersion:         "99.99.9999",
 			RestorePlan:           []history.RestorePlanEntry{{Timestamp: "20180415154238", TableFQNs: []string{"public.test_table"}}},
 			SingleDataFile:        true,
@@ -187,7 +193,7 @@ options:
 			WithStatistics:        false,
 		}
 
-		sampleBackupConfig := `
+		sampleBackupConfig := fmt.Sprintf(`
 backupdir: ""
 backupversion: 1.11.0+dev.28.g10571fd
 compressed: false
@@ -206,7 +212,7 @@ includetablefiltered: false
 incremental: false
 leafpartitiondata: false
 metadataonly: false
-plugin: /Users/pivotal/workspace/gp-backup-ddboost-plugin/gpbackup_ddboost_plugin
+plugin: %s
 pluginversion: "99.99.9999"
 restoreplan:
 - timestamp: "20180415154238"
@@ -215,7 +221,7 @@ tablefqns:
 singledatafile: true
 timestamp: "20180415154238"
 withstatistics: false
-`
+`, pluginDir)
 		var executor testhelper.TestExecutor
 		var testConfigPath = "/tmp/unit_test_plugin_config.yml"
 		var oldWd string

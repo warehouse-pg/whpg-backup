@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"strings"
 
 	"github.com/greenplum-db/gp-common-go-libs/gplog"
 	"github.com/greenplum-db/gp-common-go-libs/operating"
@@ -15,15 +14,33 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+type AuxTableID int
+
+// const auxiliary tables
+const (
+	ExcludeSchemas AuxTableID = iota
+	ExcludeRelations
+	IncludeSchemas
+	IncludeRelations
+)
+
+// Fixed auxiliary table names to avoid SQL injection, caller only will get table names in this var
+var auxTableName = map[AuxTableID]string{
+	ExcludeSchemas:   "exclude_schemas",
+	ExcludeRelations: "exclude_relations",
+	IncludeSchemas:   "include_schemas",
+	IncludeRelations: "include_relations",
+}
+
 type RestorePlanEntry struct {
 	Timestamp string
 	TableFQNs []string
 }
 
 const (
-    BackupStatusInProgress = "In Progress"
-	BackupStatusSucceed = "Success"
-	BackupStatusFailed  = "Failure"
+	BackupStatusInProgress = "In Progress"
+	BackupStatusSucceed    = "Success"
+	BackupStatusFailed     = "Failure"
 )
 
 type BackupConfig struct {
@@ -136,7 +153,7 @@ func InitializeHistoryDatabase(historyDBPath string) (*sql.DB, error) {
             without_globals INT CHECK (without_globals in (0,1)),
             with_statistics INT CHECK (with_statistics in (0,1)),
             status TEXT,
-            single_backup_dir TEXT,
+            single_backup_dir INT CHECK (single_backup_dir in (0,1)),
             command_line TEXT,
             object_count INTEGER
 		);`
@@ -218,7 +235,7 @@ func addMissingBackupsColumns(tx *sql.Tx) error {
 		name    string
 		colType string
 	}{
-		{"single_backup_dir", "TEXT"},
+		{"single_backup_dir", "INT CHECK (single_backup_dir in (0,1))"},
 		{"command_line", "TEXT"},
 		{"object_count", "INTEGER"},
 	}
@@ -254,26 +271,6 @@ func addMissingBackupsColumns(tx *sql.Tx) error {
 		}
 	}
 	return nil
-}
-
-// boolToText mirrors Postgres' textual boolean representation so that shell tooling can rely
-// on a consistent 't'/'f' value regardless of how the column was populated.
-func boolToText(b bool) string {
-	if b {
-		return "t"
-	}
-	return "f"
-}
-
-// textToBool parses the boolean text formats ('t', 'true', '1') that either gpbackup or older
-// migrated history data may have written into a TEXT boolean column.
-func textToBool(s string) bool {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "t", "true", "1":
-		return true
-	default:
-		return false
-	}
 }
 
 func CurrentTimestamp() string {
@@ -318,7 +315,7 @@ func StoreBackupHistory(db *sql.DB, currentBackupConfig *BackupConfig) error {
 		currentBackupConfig.PluginVersion, currentBackupConfig.SingleDataFile,
 		currentBackupConfig.EndTime, currentBackupConfig.WithoutGlobals,
 		currentBackupConfig.WithStatistics, currentBackupConfig.Status,
-		boolToText(currentBackupConfig.SingleBackupDir), currentBackupConfig.CommandLine,
+		currentBackupConfig.SingleBackupDir, currentBackupConfig.CommandLine,
 		currentBackupConfig.ObjectCount)
 	if err != nil {
 		goto CleanupError
@@ -400,7 +397,7 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 	var isWithStatistics int
 	// single_backup_dir, command_line, and object_count may be NULL when reading a history
 	// database that was migrated from an older gpbackup version that predates these columns.
-	var singleBackupDir sql.NullString
+	var singleBackupDir sql.NullInt64
 	var commandLine sql.NullString
 	var objectCount sql.NullInt64
 	err := backupRow.Scan(
@@ -430,14 +427,28 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 	backupConfig.SingleDataFile = isSingleDataFile == 1
 	backupConfig.WithoutGlobals = isWithoutGlobals == 1
 	backupConfig.WithStatistics = isWithStatistics == 1
-	backupConfig.SingleBackupDir = textToBool(singleBackupDir.String)
+	backupConfig.SingleBackupDir = singleBackupDir.Int64 == 1
 	backupConfig.CommandLine = commandLine.String
 	backupConfig.ObjectCount = int(objectCount.Int64)
 
 	return backupConfig, err
 }
 
-func getAuxTable(db *sql.DB, timestamp, tableName string) ([]string, error) {
+func getAuxTableName(t_id AuxTableID) (string, error) {
+	switch t_id {
+	case ExcludeSchemas, ExcludeRelations, IncludeSchemas, IncludeRelations:
+		return auxTableName[t_id], nil
+	default:
+		break
+	}
+	return "", fmt.Errorf("Unknown auxiliary table: %d", t_id)
+}
+
+func getAuxTable(db *sql.DB, timestamp string, t_id AuxTableID) ([]string, error) {
+	tableName, err := getAuxTableName(t_id)
+	if err != nil {
+		return nil, err
+	}
 	getAuxTableQuery := fmt.Sprintf("SELECT name FROM %s WHERE timestamp = ?", tableName)
 	auxTableRows, err := db.Query(getAuxTableQuery, timestamp)
 	if err != nil {
@@ -465,22 +476,22 @@ func GetBackupConfig(timestamp string, historyDB *sql.DB) (*BackupConfig, error)
 		return nil, err
 	}
 
-	backupConfig.ExcludeSchemas, err = getAuxTable(historyDB, timestamp, "exclude_schemas")
+	backupConfig.ExcludeSchemas, err = getAuxTable(historyDB, timestamp, ExcludeSchemas)
 	if err != nil {
 		return nil, err
 	}
 
-	backupConfig.ExcludeRelations, err = getAuxTable(historyDB, timestamp, "exclude_relations")
+	backupConfig.ExcludeRelations, err = getAuxTable(historyDB, timestamp, ExcludeRelations)
 	if err != nil {
 		return nil, err
 	}
 
-	backupConfig.IncludeSchemas, err = getAuxTable(historyDB, timestamp, "include_schemas")
+	backupConfig.IncludeSchemas, err = getAuxTable(historyDB, timestamp, IncludeSchemas)
 	if err != nil {
 		return nil, err
 	}
 
-	backupConfig.IncludeRelations, err = getAuxTable(historyDB, timestamp, "include_relations")
+	backupConfig.IncludeRelations, err = getAuxTable(historyDB, timestamp, IncludeRelations)
 	if err != nil {
 		return nil, err
 	}
