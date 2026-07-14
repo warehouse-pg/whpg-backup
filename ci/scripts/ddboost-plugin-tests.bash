@@ -18,6 +18,10 @@ tar -xzf gppkgs/gpbackup-gppkgs.tar.gz -C /tmp/untarred
 scp /tmp/untarred/gpbackup_tools*gp${GPDB_VERSION}*${OS}*.gppkg cdw:/home/gpadmin
 ssh -t cdw "source env.sh; gppkg -i gpbackup_tools*.gppkg"
 
+#
+# The key 66706c6c6e677a6965796f68343365303133336f6c73366b316868326764 referenced in this file is
+# a known, publicly accessible key that is not used by EDB. 2026-07-13
+#
 cat <<SCRIPT > /tmp/run_tests.bash
 #!/bin/bash
 
