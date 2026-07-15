@@ -25,6 +25,47 @@ func validateFilterListsInBackupSet() {
 	ValidateExcludeRelationsInBackupSet(opts.ExcludedRelations)
 }
 
+// ExpandExcludedExtensionsToSchemas makes --exclude-extension self-contained by
+// also excluding any schema that shares its name with an excluded extension and
+// is present in the backup set.
+//
+// Extensions such as pgaa install their configuration tables (registered via
+// pg_extension_config_dump) into a schema named after the extension, and that
+// schema is created only as a side effect of CREATE EXTENSION. When the extension
+// itself is skipped via --exclude-extension, the schema is never created, so
+// restoring its objects or data fails with `schema "<ext>" does not exist`.
+// Folding the schema into the excluded-schema filter cascades the exclusion
+// through the pre-data, data, and post-data phases without the user having to
+// pass --exclude-schema manually.
+//
+// Extensions that do not own a same-named schema (e.g. ones installed into
+// public) contribute no schema here, so nothing extra is excluded for them.
+func ExpandExcludedExtensionsToSchemas() {
+	if len(opts.ExcludedExtensions) == 0 {
+		return
+	}
+
+	// getFilterSchemasInBackupSet returns the names that are NOT in the backup,
+	// so a same-named schema exists exactly when the extension is absent from it.
+	missingSchemas := utils.NewSet(getFilterSchemasInBackupSet(opts.ExcludedExtensions))
+	alreadyExcluded := utils.NewSet(opts.ExcludedSchemas)
+	for _, ext := range opts.ExcludedExtensions {
+		if missingSchemas.MatchesFilter(ext) {
+			// No same-named schema in the backup set (e.g. an extension installed
+			// into public). Nothing extra to exclude for this extension.
+			gplog.Warn("No schema named %q found in the backup set for excluded extension %q; "+
+				"if the extension has configuration tables in another schema, restoring them may fail", ext, ext)
+			continue
+		}
+		if alreadyExcluded.MatchesFilter(ext) {
+			continue
+		}
+		gplog.Info("Also excluding schema %q owned by excluded extension %q", ext, ext)
+		opts.ExcludedSchemas = append(opts.ExcludedSchemas, ext)
+		alreadyExcluded.Set[ext] = true
+	}
+}
+
 func ValidateIncludeSchemasInBackupSet(schemaList []string) {
 	if keys := getFilterSchemasInBackupSet(schemaList); len(keys) != 0 {
 		gplog.Fatal(errors.Errorf("Could not find the following schema(s) in the backup set: %s", strings.Join(keys, ", ")), "")
@@ -277,7 +318,8 @@ func ValidateFlagCombinations(cmd *cobra.Command) {
 	if flags.Changed(options.REDIRECT_SCHEMA) {
 		// Redirect schema not compatible with any exclude flags
 		if flags.Changed(options.EXCLUDE_SCHEMA) || flags.Changed(options.EXCLUDE_SCHEMA_FILE) ||
-			flags.Changed(options.EXCLUDE_RELATION) || flags.Changed(options.EXCLUDE_RELATION_FILE) {
+			flags.Changed(options.EXCLUDE_RELATION) || flags.Changed(options.EXCLUDE_RELATION_FILE) ||
+			flags.Changed(options.EXCLUDE_EXTENSION) {
 			gplog.Fatal(errors.Errorf("Cannot use --redirect-schema with exclude flags"), "")
 		}
 		// Redirect schema requires an include flag

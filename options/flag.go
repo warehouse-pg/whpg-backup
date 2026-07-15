@@ -20,6 +20,7 @@ const (
 	DATA_ONLY             = "data-only"
 	DBNAME                = "dbname"
 	DEBUG                 = "debug"
+	EXCLUDE_EXTENSION     = "exclude-extension"
 	EXCLUDE_RELATION      = "exclude-table"
 	EXCLUDE_RELATION_FILE = "exclude-table-file"
 	EXCLUDE_SCHEMA        = "exclude-schema"
@@ -97,6 +98,7 @@ func SetRestoreFlagDefaults(flagSet *pflag.FlagSet) {
 	flagSet.Bool(CREATE_DB, false, "Create the database before metadata restore")
 	flagSet.Bool(DATA_ONLY, false, "Only restore data, do not restore metadata")
 	flagSet.Bool(DEBUG, false, "Print verbose and debug log messages")
+	flagSet.StringArray(EXCLUDE_EXTENSION, []string{}, "Skip restoring the specified extension(s), e.g. when the extension's control file is not installed on the target cluster. --exclude-extension can be specified multiple times.")
 	flagSet.StringArray(EXCLUDE_SCHEMA, []string{}, "Restore all metadata except objects in the specified schema(s). --exclude-schema can be specified multiple times.")
 	flagSet.String(EXCLUDE_SCHEMA_FILE, "", "A file containing a list of schemas that will not be restored")
 	flagSet.StringArray(EXCLUDE_RELATION, []string{}, "Restore all metadata except the specified relation(s). --exclude-table can be specified multiple times.")

@@ -22,6 +22,7 @@ type Options struct {
 	isLeafPartitionData       bool
 	ExcludedSchemas           []string
 	IncludedSchemas           []string
+	ExcludedExtensions        []string
 	originalIncludedRelations []string
 	RedirectSchema            string
 }
@@ -68,11 +69,22 @@ func NewOptions(initialFlags *pflag.FlagSet) (*Options, error) {
 		}
 	}
 
+	// EXCLUDE_EXTENSION is a restore-only flag, so it may not be registered
+	// when NewOptions is called from gpbackup.
+	var excludedExtensions []string
+	if initialFlags.Lookup(EXCLUDE_EXTENSION) != nil {
+		excludedExtensions, err = initialFlags.GetStringArray(EXCLUDE_EXTENSION)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return &Options{
 		IncludedRelations:         includedRelations,
 		ExcludedRelations:         excludedRelations,
 		IncludedSchemas:           includedSchemas,
 		ExcludedSchemas:           excludedSchemas,
+		ExcludedExtensions:        excludedExtensions,
 		isLeafPartitionData:       leafPartitionData,
 		originalIncludedRelations: includedRelations,
 		RedirectSchema:            redirectSchema,
