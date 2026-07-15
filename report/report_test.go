@@ -348,7 +348,32 @@ restore status:          Success but non-fatal errors occurred. See log file .+ 
 				Timestamp:            "timestamp1",
 				IncludeTableFiltered: true,
 				Status:               history.BackupStatusInProgress,
+				CommandLine:          strings.Join(os.Args, " "),
 			}, backupConfig)
+		})
+		It("captures single_backup_dir when the --single-backup-dir flag is set", func() {
+			backupCmdFlags := pflag.NewFlagSet("gpbackup", pflag.ExitOnError)
+			backup.SetCmdFlags(backupCmdFlags)
+			err := backupCmdFlags.Set(options.SINGLE_BACKUP_DIR, "true")
+			Expect(err).ToNot(HaveOccurred())
+			opts, err := options.NewOptions(backupCmdFlags)
+			Expect(err).ToNot(HaveOccurred())
+
+			backupConfig := backup.NewBackupConfig("testdb",
+				"5.0.0 build test", "0.1.0",
+				"", "timestamp1", *opts)
+			Expect(backupConfig.SingleBackupDir).To(BeTrue())
+		})
+		It("defaults single_backup_dir to false when the flag is not set", func() {
+			backupCmdFlags := pflag.NewFlagSet("gpbackup", pflag.ExitOnError)
+			backup.SetCmdFlags(backupCmdFlags)
+			opts, err := options.NewOptions(backupCmdFlags)
+			Expect(err).ToNot(HaveOccurred())
+
+			backupConfig := backup.NewBackupConfig("testdb",
+				"5.0.0 build test", "0.1.0",
+				"", "timestamp1", *opts)
+			Expect(backupConfig.SingleBackupDir).To(BeFalse())
 		})
 	})
 	Describe("GetDurationInfo", func() {

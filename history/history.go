@@ -73,6 +73,9 @@ type BackupConfig struct {
 	WithoutGlobals        bool
 	WithStatistics        bool
 	Status                string
+	SingleBackupDir       bool
+	CommandLine           string
+	ObjectCount           int
 }
 
 func (backup *BackupConfig) Failed() bool {
@@ -149,9 +152,21 @@ func InitializeHistoryDatabase(historyDBPath string) (*sql.DB, error) {
             end_time TEXT,
             without_globals INT CHECK (without_globals in (0,1)),
             with_statistics INT CHECK (with_statistics in (0,1)),
-            status TEXT
+            status TEXT,
+            single_backup_dir INT CHECK (single_backup_dir in (0,1)),
+            command_line TEXT,
+            object_count INTEGER
 		);`
 	_, err = tx.Exec(createBackupsTable)
+	if err != nil {
+		tx.Rollback()
+		db.Close()
+		return nil, err
+	}
+
+	// CREATE TABLE IF NOT EXISTS is a no-op against a pre-existing backups table, so
+	// databases created before these columns were introduced need them added explicitly.
+	err = addMissingBackupsColumns(tx)
 	if err != nil {
 		tx.Rollback()
 		db.Close()
@@ -213,6 +228,51 @@ func InitializeHistoryDatabase(historyDBPath string) (*sql.DB, error) {
 	return db, nil
 }
 
+// addMissingBackupsColumns adds columns to the backups table that may not be present in
+// databases created by older versions of gpbackup. It is a no-op for columns that already exist.
+func addMissingBackupsColumns(tx *sql.Tx) error {
+	newColumns := []struct {
+		name    string
+		colType string
+	}{
+		{"single_backup_dir", "INT CHECK (single_backup_dir in (0,1))"},
+		{"command_line", "TEXT"},
+		{"object_count", "INTEGER"},
+	}
+
+	rows, err := tx.Query("PRAGMA table_info(backups);")
+	if err != nil {
+		return err
+	}
+	existingColumns := make(map[string]bool)
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, colType string
+		var dfltValue sql.NullString
+		err = rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk)
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		existingColumns[name] = true
+	}
+	err = rows.Close()
+	if err != nil {
+		return err
+	}
+
+	for _, col := range newColumns {
+		if existingColumns[col.name] {
+			continue
+		}
+		_, err = tx.Exec(fmt.Sprintf("ALTER TABLE backups ADD COLUMN %s %s;", col.name, col.colType))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func CurrentTimestamp() string {
 	return operating.System.Now().Format("20060102150405")
 }
@@ -240,9 +300,9 @@ func StoreBackupHistory(db *sql.DB, currentBackupConfig *BackupConfig) error {
 			database_version, segment_count, data_only, date_deleted, exclude_schema_filtered,
 			exclude_table_filtered, include_schema_filtered, include_table_filtered, incremental,
 			leaf_partition_data, metadata_only, plugin, plugin_version, single_data_file, end_time,
-			without_globals, with_statistics, status
+			without_globals, with_statistics, status, single_backup_dir, command_line, object_count
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
 		currentBackupConfig.Timestamp, currentBackupConfig.BackupDir,
 		currentBackupConfig.BackupVersion, currentBackupConfig.Compressed,
 		currentBackupConfig.CompressionType, currentBackupConfig.DatabaseName,
@@ -254,7 +314,9 @@ func StoreBackupHistory(db *sql.DB, currentBackupConfig *BackupConfig) error {
 		currentBackupConfig.MetadataOnly, currentBackupConfig.Plugin,
 		currentBackupConfig.PluginVersion, currentBackupConfig.SingleDataFile,
 		currentBackupConfig.EndTime, currentBackupConfig.WithoutGlobals,
-		currentBackupConfig.WithStatistics, currentBackupConfig.Status)
+		currentBackupConfig.WithStatistics, currentBackupConfig.Status,
+		currentBackupConfig.SingleBackupDir, currentBackupConfig.CommandLine,
+		currentBackupConfig.ObjectCount)
 	if err != nil {
 		goto CleanupError
 	}
@@ -315,7 +377,7 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 			   database_version, segment_count, data_only, date_deleted, exclude_schema_filtered,
 			   exclude_table_filtered, include_schema_filtered, include_table_filtered, incremental,
 			   leaf_partition_data, metadata_only, plugin, plugin_version, single_data_file, end_time,
-			   without_globals, with_statistics, status
+			   without_globals, with_statistics, status, single_backup_dir, command_line, object_count
 		FROM backups WHERE timestamp = ?`
 
 	backupRow := historyDB.QueryRow(backupQuery, timestamp)
@@ -333,6 +395,11 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 	var isSingleDataFile int
 	var isWithoutGlobals int
 	var isWithStatistics int
+	// single_backup_dir, command_line, and object_count may be NULL when reading a history
+	// database that was migrated from an older gpbackup version that predates these columns.
+	var singleBackupDir sql.NullInt64
+	var commandLine sql.NullString
+	var objectCount sql.NullInt64
 	err := backupRow.Scan(
 		&backupConfig.Timestamp, &backupConfig.BackupDir, &backupConfig.BackupVersion,
 		&isCompressed, &backupConfig.CompressionType, &backupConfig.DatabaseName,
@@ -340,7 +407,8 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 		&backupConfig.DateDeleted, &isExclSchemaFiltered, &isExclTableFiltered,
 		&isInclSchemaFiltered, &isInclTableFiltered, &isIncremental, &isLeafPartition,
 		&isMetadataOnly, &backupConfig.Plugin, &backupConfig.PluginVersion, &isSingleDataFile,
-		&backupConfig.EndTime, &isWithoutGlobals, &isWithStatistics, &backupConfig.Status)
+		&backupConfig.EndTime, &isWithoutGlobals, &isWithStatistics, &backupConfig.Status,
+		&singleBackupDir, &commandLine, &objectCount)
 	if err == sql.ErrNoRows {
 		return backupConfig, errors.New("timestamp doesn't match any existing backups")
 	} else if err != nil {
@@ -359,6 +427,9 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 	backupConfig.SingleDataFile = isSingleDataFile == 1
 	backupConfig.WithoutGlobals = isWithoutGlobals == 1
 	backupConfig.WithStatistics = isWithStatistics == 1
+	backupConfig.SingleBackupDir = singleBackupDir.Int64 == 1
+	backupConfig.CommandLine = commandLine.String
+	backupConfig.ObjectCount = int(objectCount.Int64)
 
 	return backupConfig, err
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"reflect"
+	"strings"
 
 	"github.com/greenplum-db/gp-common-go-libs/cluster"
 	"github.com/greenplum-db/gp-common-go-libs/dbconn"
@@ -134,6 +135,8 @@ func NewBackupConfig(dbName string, dbVersion string, backupVersion string, plug
 		WithoutGlobals:        MustGetFlagBool(options.WITHOUT_GLOBALS),
 		WithStatistics:        MustGetFlagBool(options.WITH_STATS),
 		Status:                history.BackupStatusInProgress,
+		SingleBackupDir:       MustGetFlagBool(options.SINGLE_BACKUP_DIR),
+		CommandLine:           strings.Join(os.Args, " "),
 	}
 
 	return &backupConfig
