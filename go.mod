@@ -26,7 +26,7 @@ require (
 	gopkg.in/yaml.v2 v2.4.0
 )
 
-replace github.com/greenplum-db/gp-common-go-libs => github.com/warehouse-pg/gp-common-go-libs v1.0.24-0.20260721150157-a56b03cba710
+replace github.com/greenplum-db/gp-common-go-libs => github.com/warehouse-pg/gp-common-go-libs v1.0.25
 
 require (
 	github.com/fatih/color v1.14.1 // indirect
