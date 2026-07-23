@@ -596,6 +596,16 @@ func GetCasts(connectionPool *dbconn.DBConn) []Cast {
 		LEFT JOIN pg_namespace n ON p.pronamespace = n.oid
 	WHERE ((%s) OR (%s) OR (%s))
 		AND %s
+		-- Exclude casts Postgres creates automatically as an internal side
+		-- effect of another object (e.g. the range->multirange cast implicit
+		-- in "CREATE TYPE ... AS RANGE" on PG14+/WHPG19): they aren't
+		-- independently creatable via CREATE CAST, and PG_restore-ing one
+		-- explicitly errors since its endpoint type is still just a shell at
+		-- that point in predata restore. Same anti-join pg_dump itself uses.
+		AND NOT EXISTS (
+			SELECT 1 FROM pg_depend
+			WHERE classid = 'pg_cast'::regclass AND objid = c.oid AND deptype = 'i'
+		)
 	ORDER BY 1, 2`, methodStr,
 		SchemaFilterClause("sn"), SchemaFilterClause("tn"),
 		SchemaFilterClause("n"), ExtensionFilterClause("c"))

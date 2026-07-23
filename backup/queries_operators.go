@@ -229,9 +229,27 @@ func GetOperatorClassOperators(connectionPool *dbconn.DBConn) map[uint32][]Opera
 		AND classid = 'pg_catalog.pg_amop'::pg_catalog.regclass
 	ORDER BY amopstrategy`
 
+	// PG13+ records operator class members as depending on the operator
+	// FAMILY, not the class, so the pg_depend join above finds nothing on
+	// WHPG19. Attribute members to a class the way pg_dump does: amop rows in
+	// the class's family whose argument types match the class's input type.
+	atLeast19Query := `
+	SELECT cls.oid AS classoid,
+		amopstrategy AS strategynumber,
+		amopopr::pg_catalog.regoperator AS operator,
+		coalesce(quote_ident(ns.nspname) || '.' || quote_ident(opf.opfname), '') AS orderbyfamily
+	FROM pg_catalog.pg_opclass cls
+		JOIN pg_catalog.pg_amop ao ON ao.amopfamily = cls.opcfamily
+			AND ao.amoplefttype = cls.opcintype AND ao.amoprighttype = cls.opcintype
+		LEFT JOIN pg_opfamily opf ON opf.oid = ao.amopsortfamily
+		LEFT JOIN pg_namespace ns ON ns.oid = opf.opfnamespace
+	ORDER BY amopstrategy`
+
 	query := ""
 	if connectionPool.Version.Is("5") {
 		query = version5Query
+	} else if connectionPool.Version.AtLeast("19") {
+		query = atLeast19Query
 	} else {
 		query = atLeast6Query
 	}
@@ -267,6 +285,22 @@ func GetOperatorClassFunctions(connectionPool *dbconn.DBConn) map[uint32][]Opera
 	WHERE refclassid = 'pg_catalog.pg_opclass'::pg_catalog.regclass
 		AND classid = 'pg_catalog.pg_amproc'::pg_catalog.regclass
 	ORDER BY amprocnum`
+
+	// See GetOperatorClassOperators: PG13+ ties members to the operator
+	// family, so attribute support functions to classes via family + input
+	// type, like pg_dump.
+	if connectionPool.Version.AtLeast("19") {
+		query = `
+	SELECT cls.oid AS classoid,
+		amprocnum AS supportnumber,
+		amproclefttype::regtype,
+		amprocrighttype::regtype,
+		amproc::regprocedure::text AS functionname
+	FROM pg_catalog.pg_opclass cls
+		JOIN pg_catalog.pg_amproc ap ON ap.amprocfamily = cls.opcfamily
+			AND ap.amproclefttype = cls.opcintype AND ap.amprocrighttype = cls.opcintype
+	ORDER BY amprocnum`
+	}
 
 	err := connectionPool.Select(&results, query)
 	gplog.FatalOnError(err)
