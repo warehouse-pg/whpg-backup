@@ -1,0 +1,13 @@
+# BuildKit per-Dockerfile ignore (DOCKER_BUILDKIT=1). Build context is the repo
+# root; keep the image lean by dropping prior local build output and the
+# results dir docker cp writes back on the host.
+#
+# .git is intentionally NOT excluded: the Makefile's `build` target shells out
+# to `git describe --tags` to stamp gpbackup/gprestore/gpbackup_helper's
+# version (see Makefile's GIT_VERSION). Without .git, that command fails
+# ("not a git repository") and GIT_VERSION silently becomes empty, which gets
+# baked into the binaries via -ldflags. gprestore then fatals on every restore
+# with "Version string empty" (report.EnsureBackupVersionCompatibility trying
+# semver.Make("")) — this took down nearly the whole end_to_end suite.
+results
+build.err

@@ -1823,9 +1823,12 @@ var _ = Describe("backup and restore end to end tests", func() {
 				Expect(tableCopyCount).To(Equal(strconv.Itoa(1)))
 			})
 			It("does not retrieve trigger constraints  with the rest of the constraints", func() {
-				if backupConn.Version.Is("7") {
+				if backupConn.Version.Is("7") || backupConn.Version.AtLeast("19") {
 					// TODO: Remove this once support is added
-					Skip("Triggers on statements not yet supported in GPDB7, per src/backend/parser/gram.y:39460,39488")
+					// WHPG19 hits the identical gram.y restriction (confirmed
+					// live: "ERROR: Triggers for statements are not yet
+					// supported", same gram.y/base_yyparse site) as GPDB7.
+					Skip("Triggers on statements not yet supported in GPDB7/WHPG19, per src/backend/parser/gram.y:39460,39488")
 				}
 				testutils.SkipIfBefore6(backupConn)
 				testhelper.AssertQueryRuns(backupConn,
@@ -2070,8 +2073,16 @@ LANGUAGE plpgsql NO SQL;`)
 				Expect(contents).To(ContainSubstring("CREATE VIEW public.key_dependent_view AS \nSELECT\n\tNULL::integer AS key,\n\tNULL::character varying(20) COLLATE pg_catalog.\"C\" AS data;"))
 				Expect(contents).To(ContainSubstring("CREATE VIEW public.key_dependent_view_no_cols AS \nSELECT;"))
 				Expect(contents).To(ContainSubstring("ALTER TABLE ONLY public.view_base_table ADD CONSTRAINT view_base_table_pkey PRIMARY KEY (key);"))
-				Expect(contents).To(ContainSubstring("CREATE OR REPLACE VIEW public.key_dependent_view AS  SELECT view_base_table.key,\n    (view_base_table.data COLLATE \"C\") AS data\n   FROM public.view_base_table\n  GROUP BY view_base_table.key;"))
-				Expect(contents).To(ContainSubstring("CREATE OR REPLACE VIEW public.key_dependent_view_no_cols AS  SELECT\n   FROM public.view_base_table\n  GROUP BY view_base_table.key\n HAVING (length((view_base_table.data)::text) > 0);"))
+				if backupConn.Version.AtLeast("19") {
+					// PG19's view deparser omits redundant table/column
+					// qualification for single-relation queries, but still
+					// schema-qualifies the relation itself.
+					Expect(contents).To(ContainSubstring("CREATE OR REPLACE VIEW public.key_dependent_view AS  SELECT key,\n    (data COLLATE \"C\") AS data\n   FROM public.view_base_table\n  GROUP BY key;"))
+					Expect(contents).To(ContainSubstring("CREATE OR REPLACE VIEW public.key_dependent_view_no_cols AS  SELECT\n   FROM public.view_base_table\n  GROUP BY key\n HAVING (length((data)::text) > 0);"))
+				} else {
+					Expect(contents).To(ContainSubstring("CREATE OR REPLACE VIEW public.key_dependent_view AS  SELECT view_base_table.key,\n    (view_base_table.data COLLATE \"C\") AS data\n   FROM public.view_base_table\n  GROUP BY view_base_table.key;"))
+					Expect(contents).To(ContainSubstring("CREATE OR REPLACE VIEW public.key_dependent_view_no_cols AS  SELECT\n   FROM public.view_base_table\n  GROUP BY view_base_table.key\n HAVING (length((view_base_table.data)::text) > 0);"))
+				}
 
 				gprestore(gprestorePath, restoreHelperPath, timestamp,
 					"--redirect-db", "restoredb",

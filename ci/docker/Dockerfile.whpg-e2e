@@ -1,0 +1,165 @@
+# =============================================================================
+# whpg-backup integration + end-to-end CI image (GitHub Actions).
+#
+# Rocky Linux base (major version selectable via ROCKY_VERSION, default 9).
+# The image (1) installs a WarehousePG server from the EDB Cloudsmith RPM
+# repo, (2) stands up a single-host demo cluster, and (3) builds + runs
+# gpbackup's Ginkgo `make integration` / `make end_to_end` suites as gpadmin.
+#
+# WarehousePG is installed from Cloudsmith via the EDB downloads proxy — the
+# same mechanism used across warehouse-pg-packaging / whpg-dr:
+#   curl .../<TOKEN>/<WHPG_REPO>/setup.rpm.sh | bash   (configures the yum repo)
+#   dnf install <WHPG_PKG> <WHPG_PKG>-clients
+# WHPG_REPO selects the Cloudsmith repo: `dev` holds the WHPG19 nightly
+# (warehouse-pg-19), `gpsupp` holds released WHPG6/7 (warehouse-pg-6/-7).
+# The token is a BuildKit secret (`cloudsmith_token`) so it never lands in a
+# layer. Every major installs to /usr/edb/whpg<major> (per warehouse-pg.spec);
+# the runner is told the prefix via GPHOME.
+#
+# demo_cluster.sh (gpAux/gpdemo) is NOT shipped in the server RPM, so a copy is
+# vendored in the repo at ci/gpdemo/ (see ci/gpdemo/README.md) and copied in
+# here — the exact demo cluster mechanism verified against WHPG19 in
+# reports/WHPG19-live-container-repro.md.
+# =============================================================================
+
+# Must be declared before FROM to parameterize the base image tag.
+ARG ROCKY_VERSION=9
+
+FROM --platform=linux/amd64 rockylinux/rockylinux:${ROCKY_VERSION}
+
+ENV container=docker
+
+# Cloudsmith repo to enable (dev = WHPG19 nightly, gpsupp = released WHPG6/7)
+# and the package to install (warehouse-pg-19 / warehouse-pg-7 / warehouse-pg-6).
+ARG WHPG_REPO=dev
+ARG WHPG_PKG=warehouse-pg-19
+# Extra packages to install alongside the server, from the same Cloudsmith repo,
+# for whatever this WHPG major/OS combination genuinely needs beyond what dnf
+# resolves on its own. Empty by default (WHPG7/WHPG19). WHPG6 needs
+# python2-devel on el8 (see integration_e2e.yml's whpg6 job) -- el9 doesn't
+# have a working equivalent in this Cloudsmith repo, confirmed live via
+# `dnf`'s own dependency resolution ("nothing provides edb-python27").
+ARG WHPG_EXTRA_PKGS=
+# Go toolchain used to build gpbackup/gprestore/gpbackup_helper (CGO -> sqlite).
+# Must satisfy go.mod's `go 1.25.0` directive.
+ARG GO_VERSION=1.25.0
+
+# ---------------------------------------------------------------------------
+# System packages: build toolchain for gpbackup (CGO/sqlite), the WHPG runtime
+# deps dnf resolves for the server RPMs, plus SSH/rsync (gpinitsystem and the
+# e2e suite's cross-segment rsync both need passwordless ssh to self).
+#
+# `dnf -y update` first: the base image's glibc/glibc-common can lag behind
+# what baseos/appstream currently advertise, and installing packages that
+# pull in a newer glibc-common alongside others still pinned to the image's
+# older one fails with "cannot install both glibc-common-X and glibc-common-Y"
+# (hit live in CI on el9 -- confirmed transient, since the same el9 build
+# succeeded a few hours earlier with this same Dockerfile). Updating first
+# reconciles the whole glibc family to one version before anything else
+# is installed against it.
+# ---------------------------------------------------------------------------
+RUN dnf -y update && \
+    dnf install -y epel-release && \
+    dnf install -y --enablerepo=epel \
+        gcc gcc-c++ make git perl \
+        openssh-server openssh-clients rsync sshpass passwd sudo \
+        which less tar bzip2 zip findutils hostname procps-ng \
+        readline zlib libuuid libevent libzstd libuv \
+        libicu xerces-c apr apr-util libxml2 libyaml openldap krb5-libs \
+        python3 python3-pip python3-psutil python3-pyyaml \
+        sqlite-devel \
+        glibc-langpack-en glibc-langpack-de glibc-locale-source \
+        && dnf clean all
+
+# Locales the integration suite exercises (de_DE + en_US.UTF-8) — otherwise
+# specs that CREATE COLLATION / databases with these locales fail with
+# "could not create locale" / "invalid LC_COLLATE locale name". Mirrors the
+# Concourse test-on-local-cluster.bash `localedef -c -i de_DE -f UTF-8 de_DE`.
+RUN localedef -c -i de_DE -f UTF-8 de_DE && \
+    localedef -c -i en_US -f UTF-8 en_US.UTF-8
+
+# Initialize/run the cluster under a UTF-8 locale. gpdemo creates UTF-8-encoded
+# databases (ENCODING=UNICODE) but gpinitsystem takes LC_CTYPE from the env; with
+# the default C ctype, text-search specs that load Russian snowball stopwords
+# fail with "invalid multibyte character for locale". Setting a real UTF-8 locale
+# fixes those (and the template0 default-encoding spec) on WHPG7 and WHPG19.
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+# Go (used only to build the gpbackup binaries + install ginkgo).
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+        -o /tmp/go.tgz && \
+    tar -C /usr/local -xzf /tmp/go.tgz && \
+    rm -f /tmp/go.tgz
+ENV PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin
+
+# ---------------------------------------------------------------------------
+# WarehousePG server from Cloudsmith. The token is a BuildKit secret so it
+# never persists in an image layer. Runtime deps (apr, libicu, xerces-c, etc.)
+# resolve from Rocky9 AppStream/EPEL.
+# ---------------------------------------------------------------------------
+# Fetch the repo-setup script to a file (no pipe) so a bad/wrong token fails
+# HERE with a clear message, instead of silently skipping repo config and
+# turning into a confusing "dnf: No match for argument" later. The proxy needs
+# a Cloudsmith *entitlement/read* token (like whpg-dr's CLOUDSMITH_READ_ALL),
+# NOT a Cloudsmith API key.
+RUN --mount=type=secret,id=cloudsmith_token \
+    set -eu; \
+    TOKEN="$(tr -d '\r\n' < /run/secrets/cloudsmith_token)"; \
+    [ -n "${TOKEN}" ] || { echo "Missing build secret: cloudsmith_token" >&2; exit 1; }; \
+    if ! curl -1sSLf "https://downloads.enterprisedb.com/${TOKEN}/${WHPG_REPO}/setup.rpm.sh" -o /tmp/setup.rpm.sh; then \
+        echo "ERROR: could not fetch Cloudsmith setup.rpm.sh for repo '${WHPG_REPO}'." >&2; \
+        echo "       CLOUDSMITH_TOKEN must be an EDB Cloudsmith entitlement/read token, not an API key." >&2; \
+        exit 1; \
+    fi; \
+    bash /tmp/setup.rpm.sh; \
+    rm -f /tmp/setup.rpm.sh; \
+    dnf install -y ${WHPG_EXTRA_PKGS} "${WHPG_PKG}" "${WHPG_PKG}-clients"; \
+    dnf clean all
+
+# dummy_seclabel test module: the integration suite's SECURITY LABEL specs need
+# a "dummy" label provider loaded, but the module isn't in the RPM. Build+install
+# it into GPHOME via PGXS (vendored source, ci/dummy_seclabel/). Only one whpg*
+# is installed, so its pg_config is unambiguous. setup-cluster.bash enables it.
+COPY ci/dummy_seclabel/ /tmp/dummy_seclabel/
+RUN PGCONFIG="$(ls /usr/edb/whpg*/bin/pg_config | head -1)" && \
+    make -C /tmp/dummy_seclabel USE_PGXS=1 PG_CONFIG="${PGCONFIG}" install && \
+    rm -rf /tmp/dummy_seclabel
+
+# ---------------------------------------------------------------------------
+# gpadmin + ssh (passwordless to localhost, required by gpinitsystem/gpstart
+# and by the e2e suite's `rsync -e ssh` cross-segment copies).
+# ---------------------------------------------------------------------------
+RUN /usr/sbin/groupadd gpadmin && \
+    /usr/sbin/useradd gpadmin -g gpadmin -G wheel && \
+    echo "changeme@123" | passwd --stdin gpadmin && \
+    echo "gpadmin ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
+    echo "root   ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
+    ssh-keygen -A && \
+    echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+
+# Vendored gpdemo (ci/gpdemo/). demo_cluster.sh is self-contained and only
+# needs the server binaries on PATH.
+COPY ci/gpdemo/ /home/gpadmin/gpdemo/
+
+# whpg-backup source. Ginkgo tests expect the canonical import path.
+COPY --chown=gpadmin:gpadmin . /home/gpadmin/go/src/github.com/greenplum-db/gpbackup/
+
+# Cluster/build setup script (stage 1); the workflow execs `make integration`
+# and `make end_to_end` as separate steps afterwards.
+COPY ci/scripts/setup-cluster.bash /usr/local/bin/setup-cluster.bash
+# chown GPHOME (/usr/edb/whpg<major>) to gpadmin too: `make integration` runs
+# `build_test`, which installs the test extensions into
+# $GPHOME/share/postgresql/extension via PGXS as gpadmin — the RPM installs
+# GPHOME root-owned, so without this it fails with "Permission denied".
+RUN chmod +x /usr/local/bin/setup-cluster.bash && \
+    chown -R gpadmin:gpadmin /home/gpadmin /usr/edb
+
+USER gpadmin
+ENV USER=gpadmin
+ENV HOME=/home/gpadmin
+ENV GOPATH=/home/gpadmin/go
+ENV PATH=/home/gpadmin/go/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin
+WORKDIR /home/gpadmin/go/src/github.com/greenplum-db/gpbackup
+
+EXPOSE 5432 22

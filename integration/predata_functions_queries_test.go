@@ -426,6 +426,14 @@ INSERT INTO public.tbl VALUES (b);
 				firstProcedure.DataAccess = ""
 				secondProcedure.DataAccess = ""
 			}
+			if connectionPool.Version.AtLeast("19") {
+				// PG19's pg_get_function_(identity_)arguments now spells out
+				// the "IN" direction for procedure arguments explicitly.
+				firstProcedure.Arguments = sql.NullString{String: "IN a integer, IN b integer", Valid: true}
+				firstProcedure.IdentArgs = sql.NullString{String: "IN a integer, IN b integer", Valid: true}
+				secondProcedure.Arguments = sql.NullString{String: "IN a integer, IN b integer", Valid: true}
+				secondProcedure.IdentArgs = sql.NullString{String: "IN a integer, IN b integer", Valid: true}
+			}
 
 			Expect(results).To(HaveLen(2))
 			structmatcher.ExpectStructsToMatchExcluding(&results[0], &firstProcedure, "Oid")
@@ -806,6 +814,8 @@ LANGUAGE SQL`)
 				Expect(results).To(HaveLen(1))
 			} else {
 				// gp_toolkit is installed by default as an extension in GPDB7+
+				// (WHPG19 too: plpython3u ships available but isn't
+				// preinstalled/created by default, so it doesn't add to this count).
 				Expect(results).To(HaveLen(2))
 			}
 
@@ -821,6 +831,11 @@ LANGUAGE SQL`)
 	})
 	Describe("GetProceduralLanguages", func() {
 		It("returns a slice of procedural languages", func() {
+			if connectionPool.Version.AtLeast("19") {
+				// WHPG19 ships plpython3u as a preinstalled extension; standalone
+				// CREATE/DROP LANGUAGE of it is no longer possible.
+				Skip("procedural languages are extension-managed on WHPG19")
+			}
 			plpythonString := "plpython"
 			if connectionPool.Version.AtLeast("7") {
 				plpythonString = "plpython3"
@@ -847,11 +862,22 @@ LANGUAGE SQL`)
 		})
 	})
 	Describe("GetConversions", func() {
+		// PG19 removed the MULE_INTERNAL encoding; use a conversion pair that
+		// still exists there while keeping the historical fixture elsewhere.
+		// Resolved in BeforeEach because the connection is only established
+		// once the suite runs, not when the spec tree is built.
+		var toEncoding, convFunc string
+		BeforeEach(func() {
+			toEncoding, convFunc = "MULE_INTERNAL", "latin1_to_mic"
+			if connectionPool.Version.AtLeast("19") {
+				toEncoding, convFunc = "UTF8", "iso8859_1_to_utf8"
+			}
+		})
 		It("returns a slice of conversions", func() {
-			testhelper.AssertQueryRuns(connectionPool, "CREATE CONVERSION public.testconv FOR 'LATIN1' TO 'MULE_INTERNAL' FROM latin1_to_mic")
+			testhelper.AssertQueryRuns(connectionPool, fmt.Sprintf("CREATE CONVERSION public.testconv FOR 'LATIN1' TO '%s' FROM %s", toEncoding, convFunc))
 			defer testhelper.AssertQueryRuns(connectionPool, "DROP CONVERSION public.testconv")
 
-			expectedConversion := backup.Conversion{Oid: 0, Schema: "public", Name: "testconv", ForEncoding: "LATIN1", ToEncoding: "MULE_INTERNAL", ConversionFunction: "pg_catalog.latin1_to_mic", IsDefault: false}
+			expectedConversion := backup.Conversion{Oid: 0, Schema: "public", Name: "testconv", ForEncoding: "LATIN1", ToEncoding: toEncoding, ConversionFunction: "pg_catalog." + convFunc, IsDefault: false}
 
 			resultConversions := backup.GetConversions(connectionPool)
 
@@ -859,14 +885,14 @@ LANGUAGE SQL`)
 			structmatcher.ExpectStructsToMatchExcluding(&expectedConversion, &resultConversions[0], "Oid")
 		})
 		It("returns a slice of conversions in a specific schema", func() {
-			testhelper.AssertQueryRuns(connectionPool, "CREATE CONVERSION public.testconv FOR 'LATIN1' TO 'MULE_INTERNAL' FROM latin1_to_mic")
+			testhelper.AssertQueryRuns(connectionPool, fmt.Sprintf("CREATE CONVERSION public.testconv FOR 'LATIN1' TO '%s' FROM %s", toEncoding, convFunc))
 			defer testhelper.AssertQueryRuns(connectionPool, "DROP CONVERSION public.testconv")
 			testhelper.AssertQueryRuns(connectionPool, "CREATE SCHEMA testschema")
 			defer testhelper.AssertQueryRuns(connectionPool, "DROP SCHEMA testschema")
-			testhelper.AssertQueryRuns(connectionPool, "CREATE CONVERSION testschema.testconv FOR 'LATIN1' TO 'MULE_INTERNAL' FROM latin1_to_mic")
+			testhelper.AssertQueryRuns(connectionPool, fmt.Sprintf("CREATE CONVERSION testschema.testconv FOR 'LATIN1' TO '%s' FROM %s", toEncoding, convFunc))
 			defer testhelper.AssertQueryRuns(connectionPool, "DROP CONVERSION testschema.testconv")
 
-			expectedConversion := backup.Conversion{Oid: 0, Schema: "testschema", Name: "testconv", ForEncoding: "LATIN1", ToEncoding: "MULE_INTERNAL", ConversionFunction: "pg_catalog.latin1_to_mic", IsDefault: false}
+			expectedConversion := backup.Conversion{Oid: 0, Schema: "testschema", Name: "testconv", ForEncoding: "LATIN1", ToEncoding: toEncoding, ConversionFunction: "pg_catalog." + convFunc, IsDefault: false}
 
 			_ = backupCmdFlags.Set(options.INCLUDE_SCHEMA, "testschema")
 			resultConversions := backup.GetConversions(connectionPool)

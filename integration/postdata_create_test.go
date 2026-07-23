@@ -422,7 +422,16 @@ AS $$ BEGIN RAISE EXCEPTION 'exception'; END; $$;`)
 
 			resultViews := backup.GetAllViews(connectionPool)
 			Expect(resultViews).To(HaveLen(1))
-			structmatcher.ExpectStructsToMatchExcluding(&view1, &resultViews[0], "Oid", "ColumnDefs.Oid")
+			expectedView := view1
+			if connectionPool.Version.AtLeast("19") {
+				// PG19's view deparser omits redundant table/column
+				// qualification for single-relation queries.
+				expectedView.Definition = sql.NullString{
+					String: " SELECT key,\n    (data COLLATE \"C\") AS data\n   FROM public.view_base_table\n  GROUP BY key;",
+					Valid:  true,
+				}
+			}
+			structmatcher.ExpectStructsToMatchExcluding(&expectedView, &resultViews[0], "Oid", "ColumnDefs.Oid")
 		})
 	})
 })

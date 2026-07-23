@@ -1,0 +1,96 @@
+# =============================================================================
+# whpg-backup integration + end-to-end CI (live cluster).
+#
+# Complements build_and_unit_test.yml (unit only). Each lane stands up a
+# single-host WarehousePG demo cluster in a container and runs
+# `make integration` + `make end_to_end` against it — the live-cluster
+# equivalent of the Concourse `test-on-local-cluster` job (ci/), so the WHPG19
+# SELECT version() parser fix is exercised against a live WHPG19 cluster, not just
+# unit fixtures.
+#
+# Runs automatically on push + PR to main (plus manual dispatch), like the
+# Concourse pipeline runs on new commits. Every lane installs the WHPG server
+# from the EDB Cloudsmith RPM repo — WHPG19 nightly from `dev`, released WHPG6/7
+# from `gpsupp`. Each lane uses its own repo-scoped Cloudsmith token secret
+# (CLOUDSMITH_TOKEN_DEV for WHPG19, CLOUDSMITH_TOKEN_GPSUPP for WHPG6/7) so no
+# single read-all token is required; set them both to the same value if you do
+# have a read-all token. WHPG6/7 are included for parity per the ticket.
+#
+# NOTE: build_and_unit_test.yml triggers on `master`, but this repo's default
+# branch is `main` — that workflow likely never fires. This workflow targets
+# `main` (the actual default). Flagged in reports/ for a follow-up fix.
+# =============================================================================
+name: integration_e2e
+
+# Build (push to GHCR) needs packages: write; test (pull from GHCR) only
+# needs packages: read, but the reusable workflow can't grant itself more
+# than the caller allows, so grant the union here and let each job in
+# _integration_e2e.yml narrow it further.
+permissions:
+  contents: read
+  packages: write
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # WHPG19 — PG19-based nightly from the Cloudsmith `dev` repo
+  # (warehouse-pg-19). Installs to /usr/edb/whpg19.
+  whpg19:
+    name: WHPG19
+    uses: ./.github/workflows/_integration_e2e.yml
+    with:
+      whpg_label: WHPG19
+      gphome: /usr/edb/whpg19
+      whpg_repo: dev
+      whpg_pkg: warehouse-pg-19
+    secrets:
+      # dev-scoped Cloudsmith token (the one that already works for WHPG19).
+      CLOUDSMITH_TOKEN: ${{ secrets.CLOUDSMITH_TOKEN_DEV }}
+
+  # WHPG7 — parity lane. Released build from the Cloudsmith `gpsupp` repo
+  # (warehouse-pg-7). Installs to /usr/edb/whpg7.
+  whpg7:
+    name: WHPG7
+    uses: ./.github/workflows/_integration_e2e.yml
+    with:
+      whpg_label: WHPG7
+      gphome: /usr/edb/whpg7
+      whpg_repo: gpsupp
+      whpg_pkg: warehouse-pg-7
+    secrets:
+      # gpsupp-scoped Cloudsmith token (released WHPG6/7 live in gpsupp).
+      CLOUDSMITH_TOKEN: ${{ secrets.CLOUDSMITH_TOKEN_GPSUPP }}
+
+  # WHPG6 — parity lane (PG 9.4-based). Released build from `gpsupp`
+  # (warehouse-pg-6). Installs to /usr/edb/whpg6.
+  whpg6:
+    name: WHPG6
+    uses: ./.github/workflows/_integration_e2e.yml
+    with:
+      whpg_label: WHPG6
+      gphome: /usr/edb/whpg6
+      whpg_repo: gpsupp
+      whpg_pkg: warehouse-pg-6
+      # warehouse-pg-6 genuinely requires a python2 runtime package (confirmed
+      # live via dnf's own dependency resolution: "nothing provides
+      # edb-python27 needed by warehouse-pg-6-6.27.5_WHPG-1.el9.x86_64"), but
+      # no such package exists in this Cloudsmith repo for Rocky9. "edb-python27"
+      # (copied from whpg-dr's el9 config) was an unverified guess -- whpg-dr's
+      # own CI has never actually exercised el9+WHPG6, only el7 (ships python2
+      # natively) and el8 (python2-devel). Build WHPG6 on el8 instead, matching
+      # whpg-dr's one combination that's actually proven green in real CI.
+      rocky_version: "8"
+      whpg_extra_pkgs: python2-devel
+    secrets:
+      # gpsupp-scoped Cloudsmith token (released WHPG6/7 live in gpsupp).
+      CLOUDSMITH_TOKEN: ${{ secrets.CLOUDSMITH_TOKEN_GPSUPP }}

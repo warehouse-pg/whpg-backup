@@ -14,10 +14,18 @@ import (
 var _ = Describe("backup integration tests", func() {
 	Describe("GetOperators", func() {
 		It("returns a slice of operators", func() {
-			testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR public.## (LEFTARG = bigint, PROCEDURE = numeric_fac)")
-			defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR public.## (bigint, NONE)")
-
 			expectedOperator := backup.Operator{Oid: 0, Schema: "public", Name: "##", Procedure: "numeric_fac", LeftArgType: "bigint", RightArgType: "-", CommutatorOp: "0", NegatorOp: "0", RestrictFunction: "-", JoinFunction: "-", CanHash: false, CanMerge: false}
+			if connectionPool.Version.AtLeast("19") {
+				// PG14+ removed postfix (left-arg-only) operators; use a prefix operator instead.
+				testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR public.## (RIGHTARG = bigint, PROCEDURE = factorial)")
+				defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR public.## (NONE, bigint)")
+				expectedOperator.Procedure = "factorial"
+				expectedOperator.LeftArgType = "-"
+				expectedOperator.RightArgType = "bigint"
+			} else {
+				testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR public.## (LEFTARG = bigint, PROCEDURE = numeric_fac)")
+				defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR public.## (bigint, NONE)")
+			}
 
 			results := backup.GetOperators(connectionPool)
 
@@ -55,15 +63,25 @@ var _ = Describe("backup integration tests", func() {
 
 		})
 		It("returns a slice of operators from a specific schema", func() {
-			testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR public.## (LEFTARG = bigint, PROCEDURE = numeric_fac)")
-			defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR public.## (bigint, NONE)")
 			testhelper.AssertQueryRuns(connectionPool, "CREATE SCHEMA testschema")
 			defer testhelper.AssertQueryRuns(connectionPool, "DROP SCHEMA testschema")
-			testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR testschema.## (LEFTARG = bigint, PROCEDURE = numeric_fac)")
-			defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR testschema.## (bigint, NONE)")
-			_ = backupCmdFlags.Set(options.INCLUDE_SCHEMA, "testschema")
-
 			expectedOperator := backup.Operator{Oid: 0, Schema: "testschema", Name: "##", Procedure: "numeric_fac", LeftArgType: "bigint", RightArgType: "-", CommutatorOp: "0", NegatorOp: "0", RestrictFunction: "-", JoinFunction: "-", CanHash: false, CanMerge: false}
+			if connectionPool.Version.AtLeast("19") {
+				// PG14+ removed postfix (left-arg-only) operators; use prefix operators instead.
+				testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR public.## (RIGHTARG = bigint, PROCEDURE = factorial)")
+				defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR public.## (NONE, bigint)")
+				testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR testschema.## (RIGHTARG = bigint, PROCEDURE = factorial)")
+				defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR testschema.## (NONE, bigint)")
+				expectedOperator.Procedure = "factorial"
+				expectedOperator.LeftArgType = "-"
+				expectedOperator.RightArgType = "bigint"
+			} else {
+				testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR public.## (LEFTARG = bigint, PROCEDURE = numeric_fac)")
+				defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR public.## (bigint, NONE)")
+				testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR testschema.## (LEFTARG = bigint, PROCEDURE = numeric_fac)")
+				defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR testschema.## (bigint, NONE)")
+			}
+			_ = backupCmdFlags.Set(options.INCLUDE_SCHEMA, "testschema")
 
 			results := backup.GetOperators(connectionPool)
 
@@ -179,7 +197,7 @@ var _ = Describe("backup integration tests", func() {
 			results := backup.GetOperatorClasses(connectionPool)
 
 			Expect(results).To(HaveLen(1))
-				structmatcher.ExpectStructsToMatchExcluding(&expected, &results[0], "Oid")
+			structmatcher.ExpectStructsToMatchExcluding(&expected, &results[0], "Oid")
 
 		})
 		It("returns a slice of operator classes with an operator with a sort family", func() {
