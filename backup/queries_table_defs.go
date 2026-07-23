@@ -336,7 +336,7 @@ func GetColumnDefinitions(connectionPool *dbconn.DBConn) map[uint32][]ColumnDefi
 		a.atthasdef,
 		pg_catalog.format_type(t.oid,a.atttypmod) AS type,
 		coalesce(pg_catalog.array_to_string(e.attoptions, ','), '') AS encoding,
-		a.attstattarget,
+		coalesce(a.attstattarget, -1) AS attstattarget,
 		CASE WHEN a.attstorage != t.typstorage THEN a.attstorage ELSE '' END AS storagetype,
 		coalesce('('||pg_catalog.pg_get_expr(ad.adbin, ad.adrelid)||')', '') AS defaultval,
 		coalesce(d.description, '') AS comment,

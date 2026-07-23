@@ -30,6 +30,11 @@ FORMAT 'TEXT'`)
 				ExecLocation: "ALL_SEGMENTS", FormatType: "t", FormatOpts: "delimiter '	' null '\\N' escape '\\'",
 				Command: "", RejectLimit: 0, RejectLimitType: "", ErrTableName: "", ErrTableSchema: "", Encoding: "UTF8",
 				Writable: false, URIs: []string{"file://tmp/myfile.txt"}}
+			if connectionPool.Version.AtLeast("19") {
+				// WHPG19 no longer serializes the implicit default ESCAPE
+				// option when it isn't specified in the DDL.
+				extTable.FormatOpts = "delimiter '\t' null '\\N'"
+			}
 			structmatcher.ExpectStructsToMatchExcluding(&extTable, &result, "Oid")
 		})
 		It("returns a slice for a basic external web table definition", func() {
@@ -52,6 +57,11 @@ FORMAT 'TEXT'`)
 				// The query for GPDB 7+ will have a NULL value instead of ""
 				extTable.Location.Valid = false
 			}
+			if connectionPool.Version.AtLeast("19") {
+				// WHPG19 no longer serializes the implicit default ESCAPE
+				// option when it isn't specified in the DDL.
+				extTable.FormatOpts = "delimiter '\t' null '\\N'"
+			}
 
 			structmatcher.ExpectStructsToMatchExcluding(&extTable, &result, "Oid")
 		})
@@ -72,6 +82,11 @@ SEGMENT REJECT LIMIT 10 PERCENT
 				ExecLocation: "ALL_SEGMENTS", FormatType: "t", FormatOpts: "delimiter '	' null '\\N' escape '\\'",
 				Command: "", RejectLimit: 10, RejectLimitType: "p", LogErrors: true, Encoding: "UTF8",
 				Writable: false, URIs: []string{"file://tmp/myfile.txt"}}
+			if connectionPool.Version.AtLeast("19") {
+				// WHPG19 no longer serializes the implicit default ESCAPE
+				// option when it isn't specified in the DDL.
+				extTable.FormatOpts = "delimiter '\t' null '\\N'"
+			}
 
 			structmatcher.ExpectStructsToMatchExcluding(&extTable, &result, "Oid")
 		})
@@ -146,6 +161,10 @@ LOG ERRORS PERSISTENTLY SEGMENT REJECT LIMIT 10 PERCENT`)
 	})
 	Describe("GetExternalProtocols", func() {
 		It("returns a slice for a protocol", func() {
+			if connectionPool.Version.AtLeast("19") {
+				// gps3ext.so (the s3 external protocol library) is not shipped with WHPG19.
+				Skip("s3 protocol fixture library gps3ext.so is not available on WHPG19")
+			}
 			testhelper.AssertQueryRuns(connectionPool, "CREATE OR REPLACE FUNCTION public.write_to_s3() RETURNS integer AS '$libdir/gps3ext.so', 's3_export' LANGUAGE C STABLE;")
 			defer testhelper.AssertQueryRuns(connectionPool, "DROP FUNCTION public.write_to_s3()")
 			testhelper.AssertQueryRuns(connectionPool, "CREATE OR REPLACE FUNCTION public.read_from_s3() RETURNS integer AS '$libdir/gps3ext.so', 's3_import' LANGUAGE C STABLE;")

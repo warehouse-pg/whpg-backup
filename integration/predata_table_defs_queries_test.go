@@ -763,7 +763,13 @@ FORMAT 'TEXT'`)
 
 			oid := testutils.OidFromObjectName(connectionPool, "public", "ext_table", backup.TYPE_RELATION)
 			result := backup.GetForeignTableDefinitions(connectionPool)
-			expectedResult := backup.ForeignTableDefinition{Oid: oid, Options: "delimiter '\t',    encoding 'UTF8',    escape E'\\\\',    execute_on 'ALL_SEGMENTS',    format 'text',    is_writable 'false',    location_uris 'gpfdist://tmp:8080/myfile.txt',    log_errors 'disable',    \"null\" E'\\\\N'", Server: "gp_exttable_server"}
+			options := "delimiter '\t',    encoding 'UTF8',    escape E'\\\\',    execute_on 'ALL_SEGMENTS',    format 'text',    is_writable 'false',    location_uris 'gpfdist://tmp:8080/myfile.txt',    log_errors 'disable',    \"null\" E'\\\\N'"
+			if connectionPool.Version.AtLeast("19") {
+				// WHPG19 no longer serializes the implicit default ESCAPE
+				// option when it isn't specified in the DDL.
+				options = "delimiter '\t',    encoding 'UTF8',    execute_on 'ALL_SEGMENTS',    format 'text',    is_writable 'false',    location_uris 'gpfdist://tmp:8080/myfile.txt',    log_errors 'disable',    \"null\" E'\\\\N'"
+			}
+			expectedResult := backup.ForeignTableDefinition{Oid: oid, Options: options, Server: "gp_exttable_server"}
 			Expect(result).To(HaveLen(4))
 			Expect(result[oid]).To(Equal(expectedResult))
 		})
