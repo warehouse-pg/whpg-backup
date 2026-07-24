@@ -3,13 +3,12 @@ package backup
 import (
 	"fmt"
 
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
+	"github.com/greenplum-db/gpbackup/dbconn"
 	"github.com/greenplum-db/gpbackup/filepath"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/greenplum-db/gpbackup/history"
 	"github.com/greenplum-db/gpbackup/options"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
 )
 
@@ -148,19 +147,19 @@ func validateFlagCombinations(flags *pflag.FlagSet) {
 	options.CheckExclusiveFlags(flags, options.NO_COMPRESSION, options.COMPRESSION_LEVEL)
 	options.CheckExclusiveFlags(flags, options.PLUGIN_CONFIG, options.BACKUP_DIR)
 	if FlagChanged(options.COPY_QUEUE_SIZE) && !MustGetFlagBool(options.SINGLE_DATA_FILE) {
-		gplog.Fatal(errors.Errorf("--copy-queue-size must be specified with --single-data-file"), "")
+		gplog.Fatal(fmt.Errorf("--copy-queue-size must be specified with --single-data-file"), "")
 	}
 	if MustGetFlagString(options.FROM_TIMESTAMP) != "" && !MustGetFlagBool(options.INCREMENTAL) {
-		gplog.Fatal(errors.Errorf("--from-timestamp must be specified with --incremental"), "")
+		gplog.Fatal(fmt.Errorf("--from-timestamp must be specified with --incremental"), "")
 	}
 	if MustGetFlagBool(options.INCREMENTAL) && !MustGetFlagBool(options.LEAF_PARTITION_DATA) {
-		gplog.Fatal(errors.Errorf("--leaf-partition-data must be specified with --incremental"), "")
+		gplog.Fatal(fmt.Errorf("--leaf-partition-data must be specified with --incremental"), "")
 	}
 	if MustGetFlagBool(options.NO_INHERITS) && !(FlagChanged(options.INCLUDE_RELATION) || FlagChanged(options.INCLUDE_RELATION_FILE)) {
-		gplog.Fatal(errors.Errorf("--no-inherits must be specified with either --include-table or --include-table-file"), "")
+		gplog.Fatal(fmt.Errorf("--no-inherits must be specified with either --include-table or --include-table-file"), "")
 	}
 	if FlagChanged(options.SINGLE_BACKUP_DIR) && !FlagChanged(options.BACKUP_DIR) {
-		gplog.Fatal(errors.Errorf("--single-backup-dir must be specified with --backup-dir"), "")
+		gplog.Fatal(fmt.Errorf("--single-backup-dir must be specified with --backup-dir"), "")
 	}
 }
 
@@ -172,11 +171,11 @@ func validateFlagValues() {
 	err = utils.ValidateCompressionTypeAndLevel(MustGetFlagString(options.COMPRESSION_TYPE), MustGetFlagInt(options.COMPRESSION_LEVEL))
 	gplog.FatalOnError(err)
 	if MustGetFlagString(options.FROM_TIMESTAMP) != "" && !filepath.IsValidTimestamp(MustGetFlagString(options.FROM_TIMESTAMP)) {
-		gplog.Fatal(errors.Errorf("Timestamp %s is invalid.  Timestamps must be in the format YYYYMMDDHHMMSS.",
+		gplog.Fatal(fmt.Errorf("Timestamp %s is invalid.  Timestamps must be in the format YYYYMMDDHHMMSS.",
 			MustGetFlagString(options.FROM_TIMESTAMP)), "")
 	}
 	if FlagChanged(options.COPY_QUEUE_SIZE) && MustGetFlagInt(options.COPY_QUEUE_SIZE) < 2 {
-		gplog.Fatal(errors.Errorf("--copy-queue-size %d is invalid. Must be at least 2",
+		gplog.Fatal(fmt.Errorf("--copy-queue-size %d is invalid. Must be at least 2",
 			MustGetFlagInt(options.COPY_QUEUE_SIZE)), "")
 	}
 }
@@ -192,7 +191,7 @@ func validateFromTimestamp(fromTimestamp string) {
 	fromBackupConfig := history.ReadConfigFile(fromTimestampFPInfo.GetConfigFilePath())
 
 	if !matchesIncrementalFlags(fromBackupConfig, &backupReport.BackupConfig) {
-		gplog.Fatal(errors.Errorf("The flags of the backup with timestamp = %s does not match "+
+		gplog.Fatal(fmt.Errorf("The flags of the backup with timestamp = %s does not match "+
 			"that of the current one. Please refer to the report to view the flags supplied for the "+
 			"previous backup.", fromTimestampFPInfo.Timestamp), "")
 	}

@@ -5,11 +5,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
-	"github.com/greenplum-db/gp-common-go-libs/iohelper"
+	"github.com/greenplum-db/gpbackup/dbconn"
+	"github.com/greenplum-db/gpbackup/gplog"
+	"github.com/greenplum-db/gpbackup/iohelper"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
 )
 
@@ -216,7 +215,7 @@ func SeparateSchemaAndTable(tableNames []string) ([]Relation, error) {
 		}
 
 		if len(fqnParts) != 2 {
-			return nil, errors.Errorf("cannot process this Fully Qualified Name: %s", fqn)
+			return nil, fmt.Errorf("cannot process this Fully Qualified Name: %s", fqn)
 		}
 
 		// Properly escape quotes before running quote ident. Postgres

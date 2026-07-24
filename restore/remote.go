@@ -6,11 +6,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/greenplum-db/gp-common-go-libs/cluster"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
-	"github.com/greenplum-db/gp-common-go-libs/iohelper"
+	"github.com/greenplum-db/gpbackup/cluster"
+	"github.com/greenplum-db/gpbackup/gplog"
+	"github.com/greenplum-db/gpbackup/iohelper"
 	"github.com/greenplum-db/gpbackup/options"
-	"github.com/pkg/errors"
 )
 
 /*
@@ -110,7 +109,7 @@ func VerifyMetadataFilePaths(withStats bool) {
 		}
 	}
 	if missing {
-		gplog.Fatal(errors.Errorf("One or more metadata files do not exist or are not readable."), "Cannot proceed with restore")
+		gplog.Fatal(fmt.Errorf("One or more metadata files do not exist or are not readable."), "Cannot proceed with restore")
 	}
 }
 

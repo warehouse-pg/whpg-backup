@@ -9,15 +9,15 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/greenplum-db/gp-common-go-libs/cluster"
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
+	"github.com/greenplum-db/gpbackup/cluster"
+	"github.com/greenplum-db/gpbackup/dbconn"
 	"github.com/greenplum-db/gpbackup/filepath"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/greenplum-db/gpbackup/options"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/pkg/errors"
+	"errors"
 	"gopkg.in/cheggaaa/pb.v1"
 )
 
@@ -69,7 +69,7 @@ func CopyTableIn(connectionPool *dbconn.DBConn, tableName string, tableAttribute
 			errStr = fmt.Sprintf("%s: %s", errStr, pgErr.Where)
 		}
 
-		err = errors.Wrap(err, errStr)
+		err = fmt.Errorf("%s: %w", errStr, err)
 
 		return 0, err
 	}

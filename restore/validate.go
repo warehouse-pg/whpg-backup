@@ -5,12 +5,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
+	"github.com/greenplum-db/gpbackup/dbconn"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/greenplum-db/gpbackup/options"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -68,7 +67,7 @@ func ExpandExcludedExtensionsToSchemas() {
 
 func ValidateIncludeSchemasInBackupSet(schemaList []string) {
 	if keys := getFilterSchemasInBackupSet(schemaList); len(keys) != 0 {
-		gplog.Fatal(errors.Errorf("Could not find the following schema(s) in the backup set: %s", strings.Join(keys, ", ")), "")
+		gplog.Fatal(fmt.Errorf("Could not find the following schema(s) in the backup set: %s", strings.Join(keys, ", ")), "")
 	}
 }
 
@@ -194,7 +193,7 @@ func ValidateRedirectSchema(connectionPool *dbconn.DBConn, redirectSchema string
 
 func ValidateIncludeRelationsInBackupSet(schemaList []string) {
 	if keys := getFilterRelationsInBackupSet(schemaList); len(keys) != 0 {
-		gplog.Fatal(errors.Errorf("Could not find the following relation(s) in the backup set: %s", strings.Join(keys, ", ")), "")
+		gplog.Fatal(fmt.Errorf("Could not find the following relation(s) in the backup set: %s", strings.Join(keys, ", ")), "")
 	}
 }
 
@@ -257,30 +256,30 @@ END AS string;`, utils.EscapeSingleQuotes(unquotedDBName))
 	gplog.FatalOnError(err)
 	if !databaseExists {
 		if isFiltered {
-			gplog.Fatal(errors.Errorf(`Database "%s" must be created manually to restore table-filtered or data-only backups.`, unquotedDBName), "")
+			gplog.Fatal(fmt.Errorf(`Database "%s" must be created manually to restore table-filtered or data-only backups.`, unquotedDBName), "")
 		} else if !createDatabase {
-			gplog.Fatal(errors.Errorf(`Database "%s" does not exist. Use the --create-db flag to create "%s" as part of the restore process.`, unquotedDBName, unquotedDBName), "")
+			gplog.Fatal(fmt.Errorf(`Database "%s" does not exist. Use the --create-db flag to create "%s" as part of the restore process.`, unquotedDBName, unquotedDBName), "")
 		}
 	} else if createDatabase {
-		gplog.Fatal(errors.Errorf(`Database "%s" already exists. Run gprestore again without --create-db flag.`, unquotedDBName), "")
+		gplog.Fatal(fmt.Errorf(`Database "%s" already exists. Run gprestore again without --create-db flag.`, unquotedDBName), "")
 	}
 }
 
 func ValidateBackupFlagCombinations() {
 	if backupConfig.SingleDataFile && MustGetFlagInt(options.JOBS) != 1 {
-		gplog.Fatal(errors.Errorf("Cannot use jobs flag when restoring backups with a single data file per segment."), "")
+		gplog.Fatal(fmt.Errorf("Cannot use jobs flag when restoring backups with a single data file per segment."), "")
 	}
 	if (backupConfig.IncludeTableFiltered || backupConfig.DataOnly) && MustGetFlagBool(options.WITH_GLOBALS) {
-		gplog.Fatal(errors.Errorf("Global metadata is not backed up in table-filtered or data-only backups."), "")
+		gplog.Fatal(fmt.Errorf("Global metadata is not backed up in table-filtered or data-only backups."), "")
 	}
 	if backupConfig.MetadataOnly && MustGetFlagBool(options.DATA_ONLY) {
-		gplog.Fatal(errors.Errorf("Cannot use data-only flag when restoring metadata-only backup"), "")
+		gplog.Fatal(fmt.Errorf("Cannot use data-only flag when restoring metadata-only backup"), "")
 	}
 	if backupConfig.DataOnly && MustGetFlagBool(options.METADATA_ONLY) {
-		gplog.Fatal(errors.Errorf("Cannot use metadata-only flag when restoring data-only backup"), "")
+		gplog.Fatal(fmt.Errorf("Cannot use metadata-only flag when restoring data-only backup"), "")
 	}
 	if !backupConfig.SingleDataFile && FlagChanged(options.COPY_QUEUE_SIZE) {
-		gplog.Fatal(errors.Errorf("The --copy-queue-size flag can only be used if the backup was taken with --single-data-file"), "")
+		gplog.Fatal(fmt.Errorf("The --copy-queue-size flag can only be used if the backup was taken with --single-data-file"), "")
 	}
 	validateBackupFlagPluginCombinations()
 }
@@ -293,9 +292,9 @@ func validateBackupFlagPluginCombinations() {
 		return
 	}
 	if backupConfig.Plugin != "" && MustGetFlagString(options.PLUGIN_CONFIG) == "" {
-		gplog.Fatal(errors.Errorf("Backup was taken with plugin %s. The --plugin-config flag must be used to restore.", backupConfig.Plugin), "")
+		gplog.Fatal(fmt.Errorf("Backup was taken with plugin %s. The --plugin-config flag must be used to restore.", backupConfig.Plugin), "")
 	} else if backupConfig.Plugin == "" && MustGetFlagString(options.PLUGIN_CONFIG) != "" {
-		gplog.Fatal(errors.Errorf("The --plugin-config flag cannot be used to restore a backup taken without a plugin."), "")
+		gplog.Fatal(fmt.Errorf("The --plugin-config flag cannot be used to restore a backup taken without a plugin."), "")
 	}
 }
 
@@ -320,25 +319,25 @@ func ValidateFlagCombinations(cmd *cobra.Command) {
 		if flags.Changed(options.EXCLUDE_SCHEMA) || flags.Changed(options.EXCLUDE_SCHEMA_FILE) ||
 			flags.Changed(options.EXCLUDE_RELATION) || flags.Changed(options.EXCLUDE_RELATION_FILE) ||
 			flags.Changed(options.EXCLUDE_EXTENSION) {
-			gplog.Fatal(errors.Errorf("Cannot use --redirect-schema with exclude flags"), "")
+			gplog.Fatal(fmt.Errorf("Cannot use --redirect-schema with exclude flags"), "")
 		}
 		// Redirect schema requires an include flag
 		if !(flags.Changed(options.INCLUDE_RELATION) || flags.Changed(options.INCLUDE_RELATION_FILE) ||
 			flags.Changed(options.INCLUDE_SCHEMA) || flags.Changed(options.INCLUDE_SCHEMA_FILE)) {
-			gplog.Fatal(errors.Errorf("Cannot use --redirect-schema without --include-table, --include-table-file, --include-schema, or --include-schema-file"), "")
+			gplog.Fatal(fmt.Errorf("Cannot use --redirect-schema without --include-table, --include-table-file, --include-schema, or --include-schema-file"), "")
 		}
 	}
 	if flags.Changed(options.TRUNCATE_TABLE) &&
 		!(flags.Changed(options.INCLUDE_RELATION) || flags.Changed(options.INCLUDE_RELATION_FILE)) &&
 		!flags.Changed(options.DATA_ONLY) {
-		gplog.Fatal(errors.Errorf("Cannot use --truncate-table without --include-table or --include-table-file and without --data-only"), "")
+		gplog.Fatal(fmt.Errorf("Cannot use --truncate-table without --include-table or --include-table-file and without --data-only"), "")
 	}
 	if flags.Changed(options.INCREMENTAL) && !flags.Changed(options.DATA_ONLY) {
-		gplog.Fatal(errors.Errorf("Cannot use --incremental without --data-only"), "")
+		gplog.Fatal(fmt.Errorf("Cannot use --incremental without --data-only"), "")
 	}
 	if !flags.Changed(options.TIMESTAMP) && !flags.Changed(options.BACKUP_DIR) {
 		_ = cmd.Help()
-		gplog.Fatal(errors.Errorf("Must provide --backup-dir if --timestamp is not provided"), "")
+		gplog.Fatal(fmt.Errorf("Must provide --backup-dir if --timestamp is not provided"), "")
 	}
 	options.CheckExclusiveFlags(flags, options.RUN_ANALYZE, options.WITH_STATS)
 }
@@ -353,7 +352,7 @@ func ValidateSafeToResizeCluster() {
 	if resizeCluster {
 		if origSize == 0 {
 			timestamp := MustGetFlagString(options.TIMESTAMP)
-			gplog.Fatal(errors.Errorf("Segment count for backup with timestamp %s is unknown, cannot restore using --resize-cluster flag.", timestamp), "")
+			gplog.Fatal(fmt.Errorf("Segment count for backup with timestamp %s is unknown, cannot restore using --resize-cluster flag.", timestamp), "")
 		} else if origSize == destSize {
 			cmdFlags.Set(options.RESIZE_CLUSTER, "false")
 			gplog.Warn("Backup segment count matches restore segment count; the --resize-cluster flag is not needed.  Proceeding with a normal restore.")
@@ -362,7 +361,7 @@ func ValidateSafeToResizeCluster() {
 		}
 	} else {
 		if origSize != 0 && origSize != destSize {
-			gplog.Fatal(errors.New(fmt.Sprintf("Cannot restore a backup taken on a cluster with %d segments to a cluster with %d segments unless the --resize-cluster flag is used.", origSize, destSize)), "")
+			gplog.Fatal(fmt.Errorf("Cannot restore a backup taken on a cluster with %d segments to a cluster with %d segments unless the --resize-cluster flag is used.", origSize, destSize), "")
 		}
 	}
 }

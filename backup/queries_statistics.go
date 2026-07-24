@@ -8,10 +8,9 @@ package backup
 import (
 	"fmt"
 
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
+	"github.com/greenplum-db/gpbackup/dbconn"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/lib/pq"
 )
 
 type AttributeStatistic struct {
@@ -20,37 +19,37 @@ type AttributeStatistic struct {
 	Table        string
 	AttName      string
 	Type         string
-	Relid        uint32         `db:"starelid"`
-	AttNumber    int            `db:"staattnum"`
-	Inherit      bool           `db:"stainherit"`
-	NullFraction float64        `db:"stanullfrac"`
-	Width        int            `db:"stawidth"`
-	Distinct     float64        `db:"stadistinct"`
-	Kind1        int            `db:"stakind1"`
-	Kind2        int            `db:"stakind2"`
-	Kind3        int            `db:"stakind3"`
-	Kind4        int            `db:"stakind4"`
-	Kind5        int            `db:"stakind5"`
-	Operator1    uint32         `db:"staop1"`
-	Operator2    uint32         `db:"staop2"`
-	Operator3    uint32         `db:"staop3"`
-	Operator4    uint32         `db:"staop4"`
-	Operator5    uint32         `db:"staop5"`
-	Collation1   uint32         `db:"stacoll1"`
-	Collation2   uint32         `db:"stacoll2"`
-	Collation3   uint32         `db:"stacoll3"`
-	Collation4   uint32         `db:"stacoll4"`
-	Collation5   uint32         `db:"stacoll5"`
-	Numbers1     pq.StringArray `db:"stanumbers1"`
-	Numbers2     pq.StringArray `db:"stanumbers2"`
-	Numbers3     pq.StringArray `db:"stanumbers3"`
-	Numbers4     pq.StringArray `db:"stanumbers4"`
-	Numbers5     pq.StringArray `db:"stanumbers5"`
-	Values1      pq.StringArray `db:"stavalues1"`
-	Values2      pq.StringArray `db:"stavalues2"`
-	Values3      pq.StringArray `db:"stavalues3"`
-	Values4      pq.StringArray `db:"stavalues4"`
-	Values5      pq.StringArray `db:"stavalues5"`
+	Relid        uint32             `db:"starelid"`
+	AttNumber    int                `db:"staattnum"`
+	Inherit      bool               `db:"stainherit"`
+	NullFraction float64            `db:"stanullfrac"`
+	Width        int                `db:"stawidth"`
+	Distinct     float64            `db:"stadistinct"`
+	Kind1        int                `db:"stakind1"`
+	Kind2        int                `db:"stakind2"`
+	Kind3        int                `db:"stakind3"`
+	Kind4        int                `db:"stakind4"`
+	Kind5        int                `db:"stakind5"`
+	Operator1    uint32             `db:"staop1"`
+	Operator2    uint32             `db:"staop2"`
+	Operator3    uint32             `db:"staop3"`
+	Operator4    uint32             `db:"staop4"`
+	Operator5    uint32             `db:"staop5"`
+	Collation1   uint32             `db:"stacoll1"`
+	Collation2   uint32             `db:"stacoll2"`
+	Collation3   uint32             `db:"stacoll3"`
+	Collation4   uint32             `db:"stacoll4"`
+	Collation5   uint32             `db:"stacoll5"`
+	Numbers1     dbconn.StringArray `db:"stanumbers1"`
+	Numbers2     dbconn.StringArray `db:"stanumbers2"`
+	Numbers3     dbconn.StringArray `db:"stanumbers3"`
+	Numbers4     dbconn.StringArray `db:"stanumbers4"`
+	Numbers5     dbconn.StringArray `db:"stanumbers5"`
+	Values1      dbconn.StringArray `db:"stavalues1"`
+	Values2      dbconn.StringArray `db:"stavalues2"`
+	Values3      dbconn.StringArray `db:"stavalues3"`
+	Values4      dbconn.StringArray `db:"stavalues4"`
+	Values5      dbconn.StringArray `db:"stavalues5"`
 }
 
 func GetAttributeStatistics(connectionPool *dbconn.DBConn, tables []Table) map[uint32][]AttributeStatistic {

@@ -9,10 +9,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/pkg/errors"
 )
 
 /*
@@ -221,7 +220,7 @@ func PrintCreateCollationStatements(metadataFile *utils.FileWithByteCount, objTo
 			case "d":
 				providerOption = "default"
 			default:
-				gplog.Fatal(errors.Errorf("Unexpected collation provider: expected 'c|i|d' got '%s'\n", collation.Provider), "")
+				gplog.Fatal(fmt.Errorf("Unexpected collation provider: expected 'c|i|d' got '%s'\n", collation.Provider), "")
 			}
 			metadataFile.MustPrintf(", PROVIDER = '%s'", providerOption)
 		}

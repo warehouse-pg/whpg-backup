@@ -3,9 +3,9 @@ package backup
 import (
 	"sync"
 
-	"github.com/greenplum-db/gp-common-go-libs/testhelper"
 	"github.com/greenplum-db/gpbackup/filepath"
 	"github.com/greenplum-db/gpbackup/options"
+	"github.com/greenplum-db/gpbackup/testhelper"
 	"github.com/spf13/pflag"
 
 	. "github.com/onsi/ginkgo/v2"

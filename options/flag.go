@@ -5,11 +5,11 @@ package options
  */
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
-	"github.com/pkg/errors"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/spf13/pflag"
 )
 
@@ -144,7 +144,7 @@ func CheckExclusiveFlags(flags *pflag.FlagSet, flagNames ...string) {
 		}
 	}
 	if numSet > 1 {
-		gplog.Fatal(errors.Errorf("The following flags may not be specified together: %s", strings.Join(flagNames, ", ")), "")
+		gplog.Fatal(fmt.Errorf("The following flags may not be specified together: %s", strings.Join(flagNames, ", ")), "")
 	}
 }
 

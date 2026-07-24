@@ -10,17 +10,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/greenplum-db/gp-common-go-libs/cluster"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
-	"github.com/greenplum-db/gp-common-go-libs/operating"
+	"github.com/greenplum-db/gpbackup/cluster"
 	"github.com/greenplum-db/gpbackup/filepath"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/greenplum-db/gpbackup/history"
+	"github.com/greenplum-db/gpbackup/operating"
 	"github.com/greenplum-db/gpbackup/options"
 	"github.com/greenplum-db/gpbackup/report"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
 
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -45,7 +44,7 @@ func DoValidation(cmd *cobra.Command) {
 	gplog.FatalOnError(err)
 	providedTimestamp := MustGetFlagString(options.TIMESTAMP)
 	if providedTimestamp != "" && !filepath.IsValidTimestamp(providedTimestamp) {
-		gplog.Fatal(errors.Errorf("Timestamp %s is invalid.  Timestamps must be in the format YYYYMMDDHHMMSS.", providedTimestamp), "")
+		gplog.Fatal(fmt.Errorf("Timestamp %s is invalid.  Timestamps must be in the format YYYYMMDDHHMMSS.", providedTimestamp), "")
 	}
 }
 
@@ -293,7 +292,7 @@ func verifyIncrementalState() {
 		missing = append(missing, tableFQNsToCreate...)
 	}
 	if missing != nil {
-		err = errors.Errorf("Following objects are missing from the target database: %v", missing)
+		err = fmt.Errorf("Following objects are missing from the target database: %v", missing)
 		gplog.FatalOnError(err)
 	}
 }

@@ -11,12 +11,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
+	"github.com/greenplum-db/gpbackup/dbconn"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/greenplum-db/gpbackup/options"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/pkg/errors"
 )
 
 func relationAndSchemaFilterClause() string {
@@ -455,7 +454,7 @@ func GetAllViews(connectionPool *dbconn.DBConn) []View {
 	for _, result := range results {
 		if result.Definition.Valid {
 			if strings.Contains(result.Definition.String, "::anyarray") {
-				gplog.Fatal(errors.Errorf("Detected anyarray type cast in view definition for View '%s'", result.FQN()),
+				gplog.Fatal(fmt.Errorf("Detected anyarray type cast in view definition for View '%s'", result.FQN()),
 					"Drop the view or recreate the view without explicit array type casts.")
 			}
 		} else {

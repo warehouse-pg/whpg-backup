@@ -4,9 +4,9 @@ import (
 	"fmt"
 
 	"github.com/greenplum-db/gpbackup/backup"
+	"github.com/greenplum-db/gpbackup/dbconn"
 	"github.com/greenplum-db/gpbackup/testutils"
 	"github.com/greenplum-db/gpbackup/toc"
-	"github.com/lib/pq"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -162,7 +162,7 @@ WHERE oid = '"""test''schema"""."""test''table"""'::regclass::oid;`))
 		It("generates attribute statistics query for array type", func() {
 			attStats := backup.AttributeStatistic{Schema: "testschema", Table: "testtable", AttName: "testatt", Type: "_array", Relid: 2,
 				AttNumber: 3, NullFraction: .4, Width: 10, Distinct: .5, Kind1: 20, Operator1: 10,
-				Numbers1: pq.StringArray([]string{"1", "2", "3"}), Values1: pq.StringArray([]string{"4", "5", "6"})}
+				Numbers1: dbconn.StringArray([]string{"1", "2", "3"}), Values1: dbconn.StringArray([]string{"4", "5", "6"})}
 			if connectionPool.Version.AtLeast("6") {
 				attStats.Kind5 = 10
 				attStats.Operator5 = 12
@@ -198,7 +198,7 @@ WHERE oid = '"""test''schema"""."""test''table"""'::regclass::oid;`))
 		It("generates attribute statistics query for non-array type", func() {
 			attStats := backup.AttributeStatistic{Schema: "testschema", Table: "testtable", AttName: "testatt", Type: "testtype", Relid: 2,
 				AttNumber: 3, NullFraction: .4, Width: 10, Distinct: .5, Kind1: 20, Operator1: 10,
-				Numbers1: pq.StringArray([]string{"1", "2", "3"}), Values1: pq.StringArray([]string{"4", "5", "6"})}
+				Numbers1: dbconn.StringArray([]string{"1", "2", "3"}), Values1: dbconn.StringArray([]string{"4", "5", "6"})}
 			if connectionPool.Version.AtLeast("6") {
 				attStats.Kind5 = 10
 				attStats.Operator5 = 12

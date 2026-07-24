@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	path "path/filepath"
@@ -10,12 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/greenplum-db/gp-common-go-libs/cluster"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
-	"github.com/greenplum-db/gp-common-go-libs/iohelper"
-	"github.com/greenplum-db/gp-common-go-libs/operating"
+	"github.com/greenplum-db/gpbackup/cluster"
 	"github.com/greenplum-db/gpbackup/filepath"
-	"github.com/pkg/errors"
+	"github.com/greenplum-db/gpbackup/gplog"
+	"github.com/greenplum-db/gpbackup/iohelper"
+	"github.com/greenplum-db/gpbackup/operating"
 )
 
 var helperMutex sync.Mutex
@@ -346,7 +346,7 @@ func CheckAgentErrorsOnSegments(c *cluster.Cluster, fpInfo filepath.FilePathInfo
 	}
 	if numErrors > 0 {
 		helperLogName := fpInfo.GetHelperLogPath()
-		return errors.Errorf("Encountered errors with %d helper agent(s).  See %s for a complete list of segments with errors, and see %s on the corresponding hosts for detailed error messages.",
+		return fmt.Errorf("Encountered errors with %d helper agent(s).  See %s for a complete list of segments with errors, and see %s on the corresponding hosts for detailed error messages.",
 			numErrors, gplog.GetLogFilePath(), helperLogName)
 	}
 	return nil

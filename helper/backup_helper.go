@@ -10,7 +10,7 @@ import (
 
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/pkg/errors"
+	"errors"
 )
 
 /*
@@ -73,7 +73,7 @@ func doBackupAgent() error {
 		numBytes, err := io.Copy(pipeWriter, reader)
 		if err != nil {
 			logError(fmt.Sprintf("Oid %d: Error encountered copying bytes from pipeWriter to reader: %v", oid, err))
-			return errors.Wrap(err, strings.Trim(errBuf.String(), "\x00"))
+			return fmt.Errorf("%s: %w", strings.Trim(errBuf.String(), "\x00"), err)
 		}
 		logInfo(fmt.Sprintf("Oid %d: Read %d bytes\n", oid, numBytes))
 
@@ -99,7 +99,7 @@ func doBackupAgent() error {
 		err := writeCmd.Wait()
 		if err != nil {
 			logError(fmt.Sprintf("Error encountered writing either TOC file or error file: %v", err))
-			return errors.Wrap(err, strings.Trim(errBuf.String(), "\x00"))
+			return fmt.Errorf("%s: %w", strings.Trim(errBuf.String(), "\x00"), err)
 		}
 	}
 	err = tocfile.WriteToFileAndMakeReadOnly(*tocFile)

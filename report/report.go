@@ -10,14 +10,13 @@ import (
 	"time"
 
 	"github.com/blang/semver"
-	"github.com/greenplum-db/gp-common-go-libs/cluster"
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
-	"github.com/greenplum-db/gp-common-go-libs/iohelper"
-	"github.com/greenplum-db/gp-common-go-libs/operating"
+	"github.com/greenplum-db/gpbackup/cluster"
+	"github.com/greenplum-db/gpbackup/dbconn"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/greenplum-db/gpbackup/history"
+	"github.com/greenplum-db/gpbackup/iohelper"
+	"github.com/greenplum-db/gpbackup/operating"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/pkg/errors"
 	"gopkg.in/yaml.v2"
 )
 
@@ -298,7 +297,7 @@ func EnsureBackupVersionCompatibility(backupVersion string, restoreVersion strin
 	restoreSemVer, err := semver.Make(restoreVersion)
 	gplog.FatalOnError(err)
 	if backupSemVer.GT(restoreSemVer) {
-		gplog.Fatal(errors.Errorf("gprestore %s cannot restore a backup taken with gpbackup %s; please use gprestore %s or later.",
+		gplog.Fatal(fmt.Errorf("gprestore %s cannot restore a backup taken with gpbackup %s; please use gprestore %s or later.",
 			restoreVersion, backupVersion, backupVersion), "")
 	}
 }
@@ -309,7 +308,7 @@ func EnsureDatabaseVersionCompatibility(backupGPDBVersion string, restoreGPDBVer
 	backupGPDBSemVer, err := semver.Make(threeDigitVersion)
 	gplog.FatalOnError(err)
 	if backupGPDBSemVer.Major > restoreGPDBVersion.SemVer.Major {
-		gplog.Fatal(errors.Errorf("Cannot restore from GPDB version %s to %s due to catalog incompatibilities.", backupGPDBVersion, restoreGPDBVersion.VersionString), "")
+		gplog.Fatal(fmt.Errorf("Cannot restore from GPDB version %s to %s due to catalog incompatibilities.", backupGPDBVersion, restoreGPDBVersion.VersionString), "")
 	}
 }
 

@@ -7,12 +7,12 @@ package backup
  */
 
 import (
+	"fmt"
 	"strings"
 
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/pkg/errors"
 )
 
 func PrintCreateIndexStatements(metadataFile *utils.FileWithByteCount, objToc *toc.TOC, indexes []IndexDefinition, indexMetadata MetadataMap) {
@@ -52,7 +52,7 @@ func PrintCreateIndexStatements(metadataFile *utils.FileWithByteCount, objToc *t
 				cols := strings.Split(index.StatisticsColumns, ",")
 				vals := strings.Split(index.StatisticsValues, ",")
 				if len(cols) != len(vals) {
-					gplog.Fatal(errors.Errorf("Index StatisticsColumns(%d) and StatisticsValues(%d) count don't match\n", len(cols), len(vals)), "")
+					gplog.Fatal(fmt.Errorf("Index StatisticsColumns(%d) and StatisticsValues(%d) count don't match\n", len(cols), len(vals)), "")
 				}
 				for i := 0; i < len(cols); i++ {
 					start := metadataFile.ByteCount
@@ -155,7 +155,7 @@ func PrintCreatePolicyStatements(metadataFile *utils.FileWithByteCount, objToc *
 			case "d":
 				cmdOption = " FOR DELETE"
 			default:
-				gplog.Fatal(errors.Errorf("Unexpected policy command: expected '*|r|a|w|d' got '%s'\n", policy.Cmd), "")
+				gplog.Fatal(fmt.Errorf("Unexpected policy command: expected '*|r|a|w|d' got '%s'\n", policy.Cmd), "")
 			}
 		}
 		start = metadataFile.ByteCount
