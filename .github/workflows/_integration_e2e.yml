@@ -1,0 +1,210 @@
+# =============================================================================
+# Reusable: build a WarehousePG demo cluster in a container and run gpbackup's
+# `make integration` + `make end_to_end` suites against it. Called once per
+# WHPG major (see integration_e2e.yml).
+#
+# Two jobs, not one: `build` docker-builds the E2E image and pushes it to
+# GHCR; `test` pulls that image on a fresh runner and runs the live cluster
+# against it. This is a real job boundary (separate runners), not just a
+# grouping of steps -- the image is the hand-off artifact between them.
+#
+# The WHPG server is installed from the EDB Cloudsmith RPM repo (the mechanism
+# used across warehouse-pg-packaging / whpg-dr): the CLOUDSMITH_TOKEN secret
+# configures the yum repo and dnf installs the package. WHPG19 nightly lives in
+# the `dev` repo (warehouse-pg-19); released WHPG6/7 live in `gpsupp`.
+# =============================================================================
+name: integration-e2e-common
+
+on:
+  workflow_call:
+    inputs:
+      whpg_label:
+        description: "Display label, e.g. WHPG19 / WHPG7 / WHPG6."
+        type: string
+        required: true
+      gphome:
+        description: "Server install prefix, /usr/edb/whpg<major> (whpg19 / whpg7 / whpg6)."
+        type: string
+        required: true
+      whpg_repo:
+        description: "Cloudsmith repo to enable: dev (WHPG19 nightly) or gpsupp (released WHPG6/7)."
+        type: string
+        required: true
+      whpg_pkg:
+        description: "Package to install (warehouse-pg-19 / warehouse-pg-7 / warehouse-pg-6)."
+        type: string
+        required: true
+      whpg_extra_pkgs:
+        description: "Extra packages from the same repo (e.g. python2-devel for WHPG6 on el8). Empty otherwise."
+        type: string
+        required: false
+        default: ""
+      rocky_version:
+        description: "Rocky Linux major version for the build image. WHPG6's RPM needs a python2 runtime package this Cloudsmith repo doesn't ship for el9, so it builds on el8 instead; WHPG7/WHPG19 use the el9 default."
+        type: string
+        required: false
+        default: "9"
+      num_primary_mirror_pairs:
+        description: "Primary segment count. 3 exercises the segmentCount==3-gated e2e specs."
+        type: number
+        required: false
+        default: 3
+      run_integration:
+        type: boolean
+        required: false
+        default: true
+      run_end_to_end:
+        type: boolean
+        required: false
+        default: true
+      runs_on:
+        description: "Runner (JSON array string)."
+        type: string
+        required: false
+        default: '["ubuntu-latest"]'
+      timeout_minutes:
+        type: number
+        required: false
+        default: 120
+    secrets:
+      CLOUDSMITH_TOKEN:
+        description: "EDB Cloudsmith entitlement/read token used to install the WHPG server RPMs."
+        required: true
+
+jobs:
+  # Build the E2E image and hand it to the test job via GHCR, instead of one
+  # job doing docker-build-then-test on the same runner. Each lane pushes its
+  # own uniquely-tagged image (scoped to this run + lane), so WHPG19/7/6 never
+  # collide and nothing lingers beyond a run's own tag.
+  build:
+    name: ${{ inputs.whpg_label }} build image
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DOCKER_BUILDKIT: "1"
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+
+    steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker system prune -af || true
+          df -h
+
+      - name: Checkout whpg-backup
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      # ghcr.io image paths must be lowercase; github.repository/whpg_label
+      # aren't guaranteed to be (e.g. WHPG19).
+      - name: Compute image tag
+        id: image
+        run: |
+          repo_lc=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')
+          label_lc=$(echo '${{ inputs.whpg_label }}' | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/${repo_lc}/whpg-backup-e2e:${label_lc}-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build E2E image
+        env:
+          CLOUDSMITH_TOKEN: ${{ secrets.CLOUDSMITH_TOKEN }}
+        run: |
+          if [ -z "${CLOUDSMITH_TOKEN}" ]; then
+            echo "Missing secret CLOUDSMITH_TOKEN" >&2
+            exit 1
+          fi
+          docker build \
+            --secret id=cloudsmith_token,env=CLOUDSMITH_TOKEN \
+            --build-arg WHPG_REPO='${{ inputs.whpg_repo }}' \
+            --build-arg WHPG_PKG='${{ inputs.whpg_pkg }}' \
+            --build-arg WHPG_EXTRA_PKGS='${{ inputs.whpg_extra_pkgs }}' \
+            --build-arg ROCKY_VERSION='${{ inputs.rocky_version }}' \
+            -f ci/docker/Dockerfile.whpg-e2e \
+            -t '${{ steps.image.outputs.image }}' \
+            .
+
+      - name: Push image to GHCR
+        run: docker push '${{ steps.image.outputs.image }}'
+
+  test:
+    name: ${{ inputs.whpg_label }} integration + e2e
+    needs: build
+    runs-on: ${{ fromJSON(inputs.runs_on) }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    permissions:
+      packages: read
+    env:
+      DOCKER_BUILDKIT: "1"
+
+    steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker system prune -af || true
+          df -h
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull E2E image
+        run: docker pull '${{ needs.build.outputs.image }}'
+
+      # Start the container detached and keep it alive, so the cluster stays up
+      # across the setup/integration/end_to_end steps below and each reports
+      # its own pass/fail.
+      - name: Start container
+        run: |
+          docker run -d --name whpg-backup-e2e \
+            -e GPHOME='${{ inputs.gphome }}' \
+            -e NUM_PRIMARY_MIRROR_PAIRS='${{ inputs.num_primary_mirror_pairs }}' \
+            '${{ needs.build.outputs.image }}' \
+            sleep infinity
+
+      - name: Setup cluster + build gpbackup
+        run: docker exec whpg-backup-e2e setup-cluster.bash
+
+      - name: make integration
+        if: ${{ inputs.run_integration }}
+        run: |
+          docker exec -w "${SRC}" whpg-backup-e2e \
+            bash -c 'source ~/cluster-env.sh && make integration 2>&1 | tee ~/results/integration.log; exit ${PIPESTATUS[0]}'
+        env:
+          SRC: /home/gpadmin/go/src/github.com/greenplum-db/gpbackup
+
+      - name: make end_to_end
+        if: ${{ inputs.run_end_to_end }}
+        run: |
+          docker exec -w "${SRC}" whpg-backup-e2e \
+            bash -c 'source ~/cluster-env.sh && make end_to_end 2>&1 | tee ~/results/end_to_end.log; exit ${PIPESTATUS[0]}'
+        env:
+          SRC: /home/gpadmin/go/src/github.com/greenplum-db/gpbackup
+
+      - name: Collect results from container
+        if: ${{ always() }}
+        run: |
+          docker cp whpg-backup-e2e:/home/gpadmin/results ./results || true
+          docker rm -f whpg-backup-e2e || true
+
+      - name: Upload results
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ inputs.whpg_label }}-integration-e2e-results
+          path: |
+            ./results
+          if-no-files-found: ignore

@@ -129,6 +129,11 @@ var _ = Describe("backup integration tests", func() {
 				structmatcher.ExpectStructsToMatchExcluding(&expectedMetadata, &resultMetadata, "Oid")
 			})
 			It("returns a slice of default metadata for a procedural language", func() {
+				if connectionPool.Version.AtLeast("19") {
+					// WHPG19 ships plpython3u as a preinstalled extension; standalone
+					// CREATE/DROP LANGUAGE of it is no longer possible.
+					Skip("procedural languages are extension-managed on WHPG19")
+				}
 				plpythonString := "plpythonu"
 				if connectionPool.Version.AtLeast("7") {
 					plpythonString = "plpython3u"
@@ -199,7 +204,6 @@ LANGUAGE SQL`)
 				testhelper.AssertQueryRuns(connectionPool, `CREATE FUNCTION public.mysfunc_accum(numeric, numeric, numeric) RETURNS numeric AS 'SELECT $1 + $2 + $3' LANGUAGE SQL IMMUTABLE RETURNS NULL ON NULL INPUT`)
 				testhelper.AssertQueryRuns(connectionPool, `CREATE FUNCTION public.mycombine_accum(numeric, numeric) RETURNS numeric AS 'select $1 + $2' LANGUAGE SQL IMMUTABLE RETURNS NULL ON NULL INPUT`)
 				testhelper.AssertQueryRuns(connectionPool, `CREATE AGGREGATE public.agg_prefunc(numeric, numeric) (SFUNC = public.mysfunc_accum, STYPE = numeric, COMBINEFUNC = public.mycombine_accum, INITCOND = '0')`)
-
 
 				defer testhelper.AssertQueryRuns(connectionPool, "DROP FUNCTION public.mysfunc_accum(numeric, numeric, numeric)")
 				defer testhelper.AssertQueryRuns(connectionPool, "DROP FUNCTION public.mycombine_accum(numeric, numeric)")
@@ -338,6 +342,10 @@ LANGUAGE SQL`)
 				structmatcher.ExpectStructsToMatchExcluding(&expectedMetadata, &resultMetadata, "Oid")
 			})
 			It("returns a slice of default metadata for an external protocol", func() {
+				if connectionPool.Version.AtLeast("19") {
+					// gps3ext.so (the s3 external protocol library) is not shipped with WHPG19.
+					Skip("s3 protocol fixture library gps3ext.so is not available on WHPG19")
+				}
 				testhelper.AssertQueryRuns(connectionPool, `CREATE OR REPLACE FUNCTION public.read_from_s3() RETURNS integer AS '$libdir/gps3ext.so', 's3_import' LANGUAGE C STABLE;`)
 				defer testhelper.AssertQueryRuns(connectionPool, "DROP FUNCTION public.read_from_s3()")
 				testhelper.AssertQueryRuns(connectionPool, `CREATE TRUSTED PROTOCOL s3_read (readfunc = public.read_from_s3);`)
@@ -370,10 +378,16 @@ LANGUAGE SQL`)
 				structmatcher.ExpectStructsToMatchExcluding(&expectedMetadata, &resultMetadata, "Oid")
 			})
 			It("returns a slice of default metadata for an operator", func() {
-				testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR public.#### (LEFTARG = bigint, PROCEDURE = numeric_fac)")
-				defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR public.#### (bigint, NONE)")
-
-				testhelper.AssertQueryRuns(connectionPool, "COMMENT ON OPERATOR public.#### (bigint, NONE) IS 'This is an operator comment.'")
+				if connectionPool.Version.AtLeast("19") {
+					// PG14+ removed postfix (left-arg-only) operators; use a prefix operator instead.
+					testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR public.#### (RIGHTARG = bigint, PROCEDURE = factorial)")
+					defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR public.#### (NONE, bigint)")
+					testhelper.AssertQueryRuns(connectionPool, "COMMENT ON OPERATOR public.#### (NONE, bigint) IS 'This is an operator comment.'")
+				} else {
+					testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR public.#### (LEFTARG = bigint, PROCEDURE = numeric_fac)")
+					defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR public.#### (bigint, NONE)")
+					testhelper.AssertQueryRuns(connectionPool, "COMMENT ON OPERATOR public.#### (bigint, NONE) IS 'This is an operator comment.'")
+				}
 
 				resultMetadataMap := backup.GetMetadataForObjectType(connectionPool, backup.TYPE_OPERATOR)
 
@@ -689,13 +703,22 @@ LANGUAGE SQL`)
 				structmatcher.ExpectStructsToMatchExcluding(&expectedMetadata, &resultMetadata, "Oid")
 			})
 			It("returns a slice of default metadata for an operator in a specific schema", func() {
-				testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR public.#### (LEFTARG = bigint, PROCEDURE = numeric_fac)")
-				defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR public.#### (bigint, NONE)")
 				testhelper.AssertQueryRuns(connectionPool, "CREATE SCHEMA testschema")
 				defer testhelper.AssertQueryRuns(connectionPool, "DROP SCHEMA testschema")
-				testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR testschema.#### (LEFTARG = bigint, PROCEDURE = numeric_fac)")
-				defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR testschema.#### (bigint, NONE)")
-				testhelper.AssertQueryRuns(connectionPool, "COMMENT ON OPERATOR testschema.#### (bigint, NONE) IS 'This is an operator comment.'")
+				if connectionPool.Version.AtLeast("19") {
+					// PG14+ removed postfix (left-arg-only) operators; use prefix operators instead.
+					testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR public.#### (RIGHTARG = bigint, PROCEDURE = factorial)")
+					defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR public.#### (NONE, bigint)")
+					testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR testschema.#### (RIGHTARG = bigint, PROCEDURE = factorial)")
+					defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR testschema.#### (NONE, bigint)")
+					testhelper.AssertQueryRuns(connectionPool, "COMMENT ON OPERATOR testschema.#### (NONE, bigint) IS 'This is an operator comment.'")
+				} else {
+					testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR public.#### (LEFTARG = bigint, PROCEDURE = numeric_fac)")
+					defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR public.#### (bigint, NONE)")
+					testhelper.AssertQueryRuns(connectionPool, "CREATE OPERATOR testschema.#### (LEFTARG = bigint, PROCEDURE = numeric_fac)")
+					defer testhelper.AssertQueryRuns(connectionPool, "DROP OPERATOR testschema.#### (bigint, NONE)")
+					testhelper.AssertQueryRuns(connectionPool, "COMMENT ON OPERATOR testschema.#### (bigint, NONE) IS 'This is an operator comment.'")
+				}
 
 				_ = backupCmdFlags.Set(options.INCLUDE_SCHEMA, "testschema")
 				resultMetadataMap := backup.GetMetadataForObjectType(connectionPool, backup.TYPE_OPERATOR)

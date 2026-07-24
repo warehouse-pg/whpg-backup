@@ -114,6 +114,9 @@ var _ = Describe("backup integration tests", func() {
 			testhelper.AssertQueryRuns(connectionPool, "CREATE FUNCTION public.base_fn_out(public.base_type) RETURNS cstring AS 'boolout' LANGUAGE internal")
 			if connectionPool.Version.Before("6") {
 				testhelper.AssertQueryRuns(connectionPool, "CREATE TYPE public.base_type(INPUT=public.base_fn_in, OUTPUT=public.base_fn_out, INTERNALLENGTH=8, PASSEDBYVALUE, ALIGNMENT=double, STORAGE=plain, DEFAULT=0, ELEMENT=integer, DELIMITER=';')")
+			} else if connectionPool.Version.AtLeast("19") {
+				// PG14+ requires a SUBSCRIPT function to declare ELEMENT.
+				testhelper.AssertQueryRuns(connectionPool, "CREATE TYPE public.base_type(INPUT=public.base_fn_in, OUTPUT=public.base_fn_out, INTERNALLENGTH=8, PASSEDBYVALUE, ALIGNMENT=double, STORAGE=plain, DEFAULT=0, ELEMENT=integer, DELIMITER=';', SUBSCRIPT=raw_array_subscript_handler, CATEGORY='N', PREFERRED=true, COLLATABLE=true)")
 			} else {
 				testhelper.AssertQueryRuns(connectionPool, "CREATE TYPE public.base_type(INPUT=public.base_fn_in, OUTPUT=public.base_fn_out, INTERNALLENGTH=8, PASSEDBYVALUE, ALIGNMENT=double, STORAGE=plain, DEFAULT=0, ELEMENT=integer, DELIMITER=';', CATEGORY='N', PREFERRED=true, COLLATABLE=true)")
 			}
@@ -128,6 +131,9 @@ var _ = Describe("backup integration tests", func() {
 				baseTypeCustom.Category = "N"
 				baseTypeCustom.Preferred = true
 				baseTypeCustom.Collatable = true
+				if connectionPool.Version.AtLeast("19") {
+					baseTypeCustom.Subscript = "raw_array_subscript_handler"
+				}
 				structmatcher.ExpectStructsToMatchExcluding(&baseTypeCustom, &results[0], "Oid")
 			}
 		})
@@ -142,7 +148,13 @@ var _ = Describe("backup integration tests", func() {
 			defer testhelper.AssertQueryRuns(connectionPool, "DROP TYPE public.base_array_type CASCADE")
 			testhelper.AssertQueryRuns(connectionPool, "CREATE FUNCTION public.base_array_fn_in(cstring) RETURNS public.base_array_type AS 'boolin' LANGUAGE internal")
 			testhelper.AssertQueryRuns(connectionPool, "CREATE FUNCTION public.base_array_fn_out(public.base_array_type) RETURNS cstring AS 'boolout' LANGUAGE internal")
-			testhelper.AssertQueryRuns(connectionPool, "CREATE TYPE public.base_array_type(INPUT=public.base_array_fn_in, OUTPUT=public.base_array_fn_out, ELEMENT=text)")
+			if connectionPool.Version.AtLeast("19") {
+				// PG14+ requires a SUBSCRIPT function to declare ELEMENT.
+				testhelper.AssertQueryRuns(connectionPool, "CREATE TYPE public.base_array_type(INPUT=public.base_array_fn_in, OUTPUT=public.base_array_fn_out, ELEMENT=text, SUBSCRIPT=raw_array_subscript_handler)")
+				arrayType.Subscript = "raw_array_subscript_handler"
+			} else {
+				testhelper.AssertQueryRuns(connectionPool, "CREATE TYPE public.base_array_type(INPUT=public.base_array_fn_in, OUTPUT=public.base_array_fn_out, ELEMENT=text)")
+			}
 
 			results := backup.GetBaseTypes(connectionPool)
 
