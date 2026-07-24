@@ -18,7 +18,7 @@ import (
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
 	"github.com/klauspost/compress/zstd"
-	"github.com/pkg/errors"
+	"errors"
 	"golang.org/x/sys/unix"
 )
 
@@ -323,9 +323,9 @@ func doRestoreAgent() error {
 				lastByte[contentToRestore] += uint64(bytesRead)
 			}
 			if errBuf.Len() > 0 {
-				err = errors.Wrap(err, strings.Trim(errBuf.String(), "\x00"))
+				err = fmt.Errorf("%s: %w", strings.Trim(errBuf.String(), "\x00"), err)
 			} else {
-				err = errors.Wrap(err, "Error copying data")
+				err = fmt.Errorf("Error copying data: %w", err)
 			}
 			goto LoopEnd
 		}

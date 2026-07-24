@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,12 +11,11 @@ import (
 	"time"
 
 	"github.com/blang/semver"
-	"github.com/greenplum-db/gp-common-go-libs/cluster"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
-	"github.com/greenplum-db/gp-common-go-libs/iohelper"
-	"github.com/greenplum-db/gp-common-go-libs/operating"
+	"github.com/greenplum-db/gpbackup/cluster"
 	"github.com/greenplum-db/gpbackup/filepath"
-	"github.com/pkg/errors"
+	"github.com/greenplum-db/gpbackup/gplog"
+	"github.com/greenplum-db/gpbackup/iohelper"
+	"github.com/greenplum-db/gpbackup/operating"
 	"gopkg.in/yaml.v2"
 )
 

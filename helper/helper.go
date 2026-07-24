@@ -14,8 +14,8 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
-	"github.com/greenplum-db/gp-common-go-libs/operating"
+	"github.com/greenplum-db/gpbackup/gplog"
+	"github.com/greenplum-db/gpbackup/operating"
 	"github.com/greenplum-db/gpbackup/utils"
 )
 

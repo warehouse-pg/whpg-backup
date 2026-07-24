@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/greenplum-db/gpbackup/dbconn"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/lib/pq"
 )
 
 func PrintStatisticsStatements(statisticsFile *utils.FileWithByteCount, tocfile *toc.TOC, tables []Table, attStats map[uint32][]AttributeStatistic, tupleStats map[uint32]TupleStatistic) {
@@ -307,7 +307,7 @@ func SliceToPostgresArray(slice []string) string {
 	return fmt.Sprintf(`'{%s}'`, strings.Join(quotedStrings, ","))
 }
 
-func realValues(reals pq.StringArray) string {
+func realValues(reals dbconn.StringArray) string {
 	if len(reals) > 0 {
 		return SliceToPostgresArray(reals)
 	}
@@ -318,7 +318,7 @@ func realValues(reals pq.StringArray) string {
  * A given type is not guaranteed to have a corresponding array type, so we need
  * to use array_in() instead of casting to an array.
  */
-func AnyValues(any pq.StringArray, typ string) string {
+func AnyValues(any dbconn.StringArray, typ string) string {
 	if len(any) > 0 {
 		return fmt.Sprintf(`array_in(%s, '%s'::regtype::oid, -1)`, SliceToPostgresArray(any), typ)
 	}

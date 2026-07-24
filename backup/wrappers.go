@@ -7,16 +7,15 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/greenplum-db/gp-common-go-libs/cluster"
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
+	"github.com/greenplum-db/gpbackup/cluster"
+	"github.com/greenplum-db/gpbackup/dbconn"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/greenplum-db/gpbackup/history"
 	"github.com/greenplum-db/gpbackup/options"
 	"github.com/greenplum-db/gpbackup/report"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
 	"github.com/nightlyone/lockfile"
-	"github.com/pkg/errors"
 )
 
 /*
@@ -187,7 +186,7 @@ func createBackupLockFile(timestamp string) {
 	err = backupLockFile.TryLock()
 	if err != nil {
 		gplog.Error("%s", err.Error())
-		gplog.Fatal(errors.Errorf("A backup with timestamp %s is already in progress. Wait 1 second and try the backup again.", timestamp), "")
+		gplog.Fatal(fmt.Errorf("A backup with timestamp %s is already in progress. Wait 1 second and try the backup again.", timestamp), "")
 	}
 }
 

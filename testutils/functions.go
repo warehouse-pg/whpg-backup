@@ -1,6 +1,8 @@
 package testutils
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -8,19 +10,17 @@ import (
 	"strings"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/greenplum-db/gp-common-go-libs/cluster"
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
-	"github.com/greenplum-db/gp-common-go-libs/operating"
-	"github.com/greenplum-db/gp-common-go-libs/structmatcher"
-	"github.com/greenplum-db/gp-common-go-libs/testhelper"
 	"github.com/greenplum-db/gpbackup/backup"
+	"github.com/greenplum-db/gpbackup/cluster"
+	"github.com/greenplum-db/gpbackup/dbconn"
 	"github.com/greenplum-db/gpbackup/filepath"
+	"github.com/greenplum-db/gpbackup/gplog"
+	"github.com/greenplum-db/gpbackup/operating"
 	"github.com/greenplum-db/gpbackup/restore"
+	"github.com/greenplum-db/gpbackup/structmatcher"
+	"github.com/greenplum-db/gpbackup/testhelper"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 	"github.com/sergi/go-diff/diffmatchpatch"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -109,10 +109,10 @@ func SetupTestDBConnSegment(dbname string, port int, host string, gpVersion dbco
 	if err != nil {
 		gplog.FatalOnError(err)
 	}
-	conn.ConnPool = make([]*sqlx.DB, 1)
+	conn.ConnPool = make([]*sql.DB, 1)
 	conn.ConnPool[0] = segConn
 
-	conn.Tx = make([]*sqlx.Tx, 1)
+	conn.Tx = make([]*sql.Tx, 1)
 	conn.NumConns = 1
 	version, err := dbconn.InitializeVersion(conn)
 	if err != nil {

@@ -1,6 +1,7 @@
 package report_test
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -10,19 +11,18 @@ import (
 	"time"
 
 	"github.com/blang/semver"
-	"github.com/greenplum-db/gp-common-go-libs/cluster"
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
-	"github.com/greenplum-db/gp-common-go-libs/operating"
-	"github.com/greenplum-db/gp-common-go-libs/structmatcher"
-	"github.com/greenplum-db/gp-common-go-libs/testhelper"
 	"github.com/greenplum-db/gpbackup/backup"
+	"github.com/greenplum-db/gpbackup/cluster"
+	"github.com/greenplum-db/gpbackup/dbconn"
 	"github.com/greenplum-db/gpbackup/filepath"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/greenplum-db/gpbackup/history"
+	"github.com/greenplum-db/gpbackup/operating"
 	"github.com/greenplum-db/gpbackup/options"
+	"github.com/greenplum-db/gpbackup/structmatcher"
+	"github.com/greenplum-db/gpbackup/testhelper"
 	"github.com/greenplum-db/gpbackup/testutils"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v2"
 
@@ -621,7 +621,7 @@ Content-Disposition: inline
 				_, _ = w.Write(contactsFileContents)
 				_ = w.Close()
 
-				testExecutor.LocalError = errors.Errorf("exit status 2")
+				testExecutor.LocalError = fmt.Errorf("exit status 2")
 
 				report.EmailReport(testCluster, testFPInfo.Timestamp, "report_file", "gpbackup", true, "testdb")
 				Expect(testExecutor.NumExecutions).To(Equal(2))
@@ -633,7 +633,7 @@ Content-Disposition: inline
 				_ = w.Close()
 
 				testExecutor.ErrorOnExecNum = 2 // Shouldn't hit this case, as it shouldn't be executed a second time
-				testExecutor.LocalError = errors.Errorf("exit status 2")
+				testExecutor.LocalError = fmt.Errorf("exit status 2")
 
 				report.EmailReport(testCluster, testFPInfo.Timestamp, "report_file", "gpbackup", true, "testdb")
 				Expect(testExecutor.NumExecutions).To(Equal(2))
@@ -645,7 +645,7 @@ Content-Disposition: inline
 				_ = w.Close()
 
 				testExecutor.ErrorOnExecNum = 1
-				testExecutor.LocalError = errors.Errorf("exit status 2")
+				testExecutor.LocalError = fmt.Errorf("exit status 2")
 
 				report.EmailReport(testCluster, testFPInfo.Timestamp, "report_file", "gpbackup", true, "testdb")
 				Expect(testExecutor.NumExecutions).To(Equal(3))

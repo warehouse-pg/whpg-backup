@@ -16,11 +16,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
-	"github.com/greenplum-db/gp-common-go-libs/operating"
+	"github.com/greenplum-db/gpbackup/dbconn"
 	"github.com/greenplum-db/gpbackup/filepath"
-	"github.com/pkg/errors"
+	"github.com/greenplum-db/gpbackup/gplog"
+	"github.com/greenplum-db/gpbackup/operating"
 	"golang.org/x/sys/unix"
 )
 
@@ -120,7 +119,7 @@ func ValidateFQNs(tableList []string) error {
 	validFormat := regexp.MustCompile(`^.+\..+$`)
 	for _, fqn := range tableList {
 		if !validFormat.Match([]byte(fqn)) {
-			return errors.Errorf(`Table "%s" is not correctly fully-qualified.  Please ensure table is in the format "schema.table".`, fqn)
+			return fmt.Errorf(`Table "%s" is not correctly fully-qualified.  Please ensure table is in the format "schema.table".`, fqn)
 		}
 	}
 	return nil
@@ -128,7 +127,7 @@ func ValidateFQNs(tableList []string) error {
 
 func ValidateFullPath(path string) error {
 	if len(path) > 0 && !(strings.HasPrefix(path, "/") || strings.HasPrefix(path, "~")) {
-		return errors.Errorf("%s is not an absolute path.", path)
+		return fmt.Errorf("%s is not an absolute path.", path)
 	}
 	return nil
 }
@@ -247,7 +246,7 @@ func TerminateHangingCopySessions(fpInfo filepath.FilePathInfo, appName string, 
 
 func ValidateGPDBVersionCompatibility(connectionPool *dbconn.DBConn) {
 	if connectionPool.Version.Before(MINIMUM_GPDB5_VERSION) {
-		gplog.Fatal(errors.Errorf(`GPDB version %s is not supported. Please upgrade to GPDB %s or later.`, connectionPool.Version.VersionString, MINIMUM_GPDB5_VERSION), "")
+		gplog.Fatal(fmt.Errorf(`GPDB version %s is not supported. Please upgrade to GPDB %s or later.`, connectionPool.Version.VersionString, MINIMUM_GPDB5_VERSION), "")
 	}
 }
 

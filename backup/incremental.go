@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"path"
 
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
-	"github.com/greenplum-db/gp-common-go-libs/operating"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/greenplum-db/gpbackup/history"
+	"github.com/greenplum-db/gpbackup/operating"
 	"github.com/greenplum-db/gpbackup/options"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/pkg/errors"
 )
 
 func FilterTablesForIncremental(lastBackupTOC, currentTOC *toc.TOC, tables []Table) []Table {
@@ -53,7 +52,7 @@ func GetLatestMatchingBackupTimestamp() string {
 	}
 
 	if latestMatchingBackupHistoryEntry == nil {
-		gplog.FatalOnError(errors.Errorf("There was no matching previous backup found with the flags provided. " +
+		gplog.FatalOnError(fmt.Errorf("There was no matching previous backup found with the flags provided. " +
 			"Please take a full backup."))
 	} else {
 		latestTimestamp = latestMatchingBackupHistoryEntry.Timestamp

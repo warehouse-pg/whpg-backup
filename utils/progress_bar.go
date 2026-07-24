@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"gopkg.in/cheggaaa/pb.v1"
 )
 

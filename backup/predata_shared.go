@@ -7,10 +7,11 @@ package backup
  */
 
 import (
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
+	"fmt"
+
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/pkg/errors"
 )
 
 /*
@@ -77,7 +78,7 @@ func PrintAccessMethodStatements(metadataFile *utils.FileWithByteCount, objToc *
 		case "i":
 			methodTypeStr = toc.OBJ_INDEX
 		default:
-			gplog.Fatal(errors.Errorf("Invalid access method type: expected 't' or 'i', got '%s'\n", method.Type), "")
+			gplog.Fatal(fmt.Errorf("Invalid access method type: expected 't' or 'i', got '%s'\n", method.Type), "")
 		}
 		metadataFile.MustPrintf("\n\nCREATE ACCESS METHOD %s TYPE %s HANDLER %s;", method.Name, methodTypeStr, method.Handler)
 		section, entry := method.GetMetadataEntry()

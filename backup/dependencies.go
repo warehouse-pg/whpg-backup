@@ -5,11 +5,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
+	"github.com/greenplum-db/gpbackup/dbconn"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/pkg/errors"
 )
 
 /* This file contains functions to sort objects that have dependencies among themselves.
@@ -138,7 +137,7 @@ STAGE2:
 				}
 			}
 		}
-		gplog.Fatal(errors.Errorf("Dependency resolution failed; see log file %s for details. This is a bug, please report.", gplog.GetLogFilePath()), "")
+		gplog.Fatal(fmt.Errorf("Dependency resolution failed; see log file %s for details. This is a bug, please report.", gplog.GetLogFilePath()), "")
 	}
 	assignCohorts(slice, dependencies, isDependentOn, tierMap)
 	return sorted, tierMap

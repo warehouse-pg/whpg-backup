@@ -11,10 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pkg/errors"
-
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
+	"github.com/greenplum-db/gpbackup/dbconn"
+	"github.com/greenplum-db/gpbackup/gplog"
 	"github.com/greenplum-db/gpbackup/options"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
@@ -367,7 +365,7 @@ func PrintIdentityColumns(metadataFile *utils.FileWithByteCount, objToc *toc.TOC
 			} else if seq.OwningColumnAttIdentity == "d" {
 				attrIdentityStr = "BY DEFAULT"
 			} else {
-				gplog.Fatal(errors.Errorf("Invalid Owning Column Attribute came for Identity sequence: expected 'a' or 'd', got '%s'\n", seq.OwningColumnAttIdentity), "")
+				gplog.Fatal(fmt.Errorf("Invalid Owning Column Attribute came for Identity sequence: expected 'a' or 'd', got '%s'\n", seq.OwningColumnAttIdentity), "")
 			}
 
 			metadataFile.MustPrintf("ALTER TABLE %s\nALTER COLUMN %s ADD GENERATED %s AS IDENTITY (",
