@@ -1,43 +1,48 @@
 name: build_and_unit_test
 
+# This previously triggered on `master`, a branch this repository does not have,
+# so it never ran on a push or a pull request.
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
   pull_request:
-    branches: [ master ]
-    types: [ opened, synchronize, reopened, edited, ready_for_review ]
+    branches: [ main ]
+    types: [ opened, synchronize, reopened, ready_for_review ]
 
 jobs:
 
   build_and_unit_test:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v7
       with:
+        # The version stamped into the binaries is derived from git describe.
         fetch-depth: 0
-        path: go/src/github.com/greenplum-db/gpbackup
 
     - name: Set up Go
-      uses: actions/setup-go@v2
+      uses: actions/setup-go@v7
       with:
-        go-version: 1.17
+        # Track the go directive rather than a hardcoded version, so a bump in
+        # go.mod cannot silently leave CI behind.
+        go-version-file: go.mod
 
-    - name: Set Environment
+    # The Makefile requires GOPATH outright, and installs ginkgo into
+    # $GOPATH/bin then invokes it by bare name, so both the variable and the bin
+    # directory are needed. Go's own default location, rather than a path named
+    # after the repository as before.
+    - name: Set GOPATH
       run: |
-        echo "GOPATH=/home/runner/work/gpbackup/gpbackup/go" >> $GITHUB_ENV
-        echo "/home/runner/work/gpbackup/gpbackup/go/bin" >> $GITHUB_PATH
+        echo "GOPATH=$HOME/go" >> $GITHUB_ENV
+        echo "$HOME/go/bin" >> $GITHUB_PATH
 
     - name: Dependencies
-      run: |
-        cd ${GOPATH}/src/github.com/greenplum-db/gpbackup
-        make depend
+      run: make depend
 
     - name: Build
-      run: |
-        cd ${GOPATH}/src/github.com/greenplum-db/gpbackup
-        make build
+      run: make build
+
+    - name: Vet
+      run: go vet ./...
 
     - name: Unit Test
-      run: |
-        cd ${GOPATH}/src/github.com/greenplum-db/gpbackup
-        make unit_all_gpdb_versions
+      run: make unit_all_gpdb_versions
