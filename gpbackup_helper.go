@@ -1,3 +1,4 @@
+//go:build gpbackup_helper
 // +build gpbackup_helper
 
 package main
