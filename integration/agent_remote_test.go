@@ -3,9 +3,9 @@ package integration
 import (
 	"fmt"
 
-	"github.com/greenplum-db/gp-common-go-libs/cluster"
 	"github.com/greenplum-db/gpbackup/filepath"
 	"github.com/greenplum-db/gpbackup/utils"
+	"github.com/warehouse-pg/common-go-libs/cluster"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"

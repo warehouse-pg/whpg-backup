@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
 	"github.com/greenplum-db/gpbackup/utils"
+	"github.com/warehouse-pg/common-go-libs/gplog"
 	"gopkg.in/yaml.v2"
 )
 

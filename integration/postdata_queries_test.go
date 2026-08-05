@@ -4,11 +4,11 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/greenplum-db/gp-common-go-libs/structmatcher"
-	"github.com/greenplum-db/gp-common-go-libs/testhelper"
 	"github.com/greenplum-db/gpbackup/backup"
 	"github.com/greenplum-db/gpbackup/options"
 	"github.com/greenplum-db/gpbackup/testutils"
+	"github.com/warehouse-pg/common-go-libs/structmatcher"
+	"github.com/warehouse-pg/common-go-libs/testhelper"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -69,11 +69,11 @@ var _ = Describe("backup integration tests", func() {
 			results := backup.GetIndexes(connectionPool)
 
 			Expect(results).To(HaveLen(2))
-			results[0].Oid = testutils.OidFromObjectName(connectionPool, "", "simple_table_idx1", backup.TYPE_INDEX)
-			results[1].Oid = testutils.OidFromObjectName(connectionPool, "", "simple_table_idx2", backup.TYPE_INDEX)
 
-			structmatcher.ExpectStructsToMatchExcluding(&index1, &results[0], "Oid")
-			structmatcher.ExpectStructsToMatchExcluding(&index2, &results[1], "Oid")
+			index1.Oid = testutils.OidFromObjectName(connectionPool, "public", "simple_table_idx1", backup.TYPE_RELATION)
+			index2.Oid = testutils.OidFromObjectName(connectionPool, "public", "simple_table_idx2", backup.TYPE_RELATION)
+			structmatcher.ExpectStructsToMatch(&index1, &results[0])
+			structmatcher.ExpectStructsToMatch(&index2, &results[1])
 		})
 		It("returns a slice of multiple indexes, including implicit indexes created by constraints", func() {
 			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.simple_table(i int, j int, k int)")
@@ -98,8 +98,10 @@ var _ = Describe("backup integration tests", func() {
 
 			Expect(userIndex).To(HaveLen(2))
 			Expect(supportsConstraint).To(HaveLen(1))
-			structmatcher.ExpectStructsToMatchExcluding(&index1, &userIndex[0], "Oid")
-			structmatcher.ExpectStructsToMatchExcluding(&index2, &userIndex[1], "Oid")
+			index1.Oid = testutils.OidFromObjectName(connectionPool, "public", "simple_table_idx1", backup.TYPE_RELATION)
+			index2.Oid = testutils.OidFromObjectName(connectionPool, "public", "simple_table_idx2", backup.TYPE_RELATION)
+			structmatcher.ExpectStructsToMatch(&index1, &userIndex[0])
+			structmatcher.ExpectStructsToMatch(&index2, &userIndex[1])
 		})
 		It("returns a slice of indexes for only partition parent tables", func() {
 			// In GPDB 7+, all partitions will have their own CREATE INDEX statement
@@ -124,7 +126,8 @@ PARTITION BY RANGE (date)
 			results := backup.GetIndexes(connectionPool)
 
 			Expect(results).To(HaveLen(1))
-			structmatcher.ExpectStructsToMatchExcluding(&index1, &results[0], "Oid")
+			index1.Oid = testutils.OidFromObjectName(connectionPool, "public", "part_idx", backup.TYPE_RELATION)
+			structmatcher.ExpectStructsToMatch(&index1, &results[0])
 		})
 		It("returns a slice containing an index in a non-default tablespace", func() {
 			if connectionPool.Version.Before("6") {
@@ -143,9 +146,9 @@ PARTITION BY RANGE (date)
 			results := backup.GetIndexes(connectionPool)
 
 			Expect(results).To(HaveLen(1))
-			results[0].Oid = testutils.OidFromObjectName(connectionPool, "", "simple_table_idx", backup.TYPE_INDEX)
 
-			structmatcher.ExpectStructsToMatchExcluding(&index1, &results[0], "Oid")
+			index1.Oid = testutils.OidFromObjectName(connectionPool, "public", "simple_table_idx", backup.TYPE_RELATION)
+			structmatcher.ExpectStructsToMatch(&index1, &results[0])
 		})
 		It("returns a slice for an index in specific schema", func() {
 			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.simple_table(i int, j int, k int)")
@@ -165,9 +168,9 @@ PARTITION BY RANGE (date)
 			results := backup.GetIndexes(connectionPool)
 
 			Expect(results).To(HaveLen(1))
-			results[0].Oid = testutils.OidFromObjectName(connectionPool, "", "simple_table_idx1", backup.TYPE_INDEX)
 
-			structmatcher.ExpectStructsToMatchExcluding(&index1, &results[0], "Oid")
+			index1.Oid = testutils.OidFromObjectName(connectionPool, "testschema", "simple_table_idx1", backup.TYPE_RELATION)
+			structmatcher.ExpectStructsToMatch(&index1, &results[0])
 		})
 		It("returns a slice of indexes belonging to filtered tables", func() {
 			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.simple_table(i int, j int, k int)")
@@ -190,9 +193,9 @@ PARTITION BY RANGE (date)
 			results := backup.GetIndexes(connectionPool)
 
 			Expect(results).To(HaveLen(1))
-			results[0].Oid = testutils.OidFromObjectName(connectionPool, "", "simple_table_idx1", backup.TYPE_INDEX)
 
-			structmatcher.ExpectStructsToMatchExcluding(&index1, &results[0], "Oid")
+			index1.Oid = testutils.OidFromObjectName(connectionPool, "testschema", "simple_table_idx1", backup.TYPE_RELATION)
+			structmatcher.ExpectStructsToMatch(&index1, &results[0])
 		})
 		It("returns a slice for an index used for clustering", func() {
 			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.simple_table(i int, j int, k int)")
@@ -206,9 +209,9 @@ PARTITION BY RANGE (date)
 			results := backup.GetIndexes(connectionPool)
 
 			Expect(results).To(HaveLen(1))
-			results[0].Oid = testutils.OidFromObjectName(connectionPool, "", "simple_table_idx1", backup.TYPE_INDEX)
 
-			structmatcher.ExpectStructsToMatchExcluding(&index1, &results[0], "Oid")
+			index1.Oid = testutils.OidFromObjectName(connectionPool, "public", "simple_table_idx1", backup.TYPE_RELATION)
+			structmatcher.ExpectStructsToMatch(&index1, &results[0])
 		})
 		It("returns a slice of an index with statistics on expression columns", func() {
 			testutils.SkipIfBefore7(connectionPool)
@@ -223,9 +226,9 @@ PARTITION BY RANGE (date)
 			results := backup.GetIndexes(connectionPool)
 
 			Expect(results).To(HaveLen(1))
-			results[0].Oid = testutils.OidFromObjectName(connectionPool, "", "simple_table_idx1", backup.TYPE_INDEX)
 
-			structmatcher.ExpectStructsToMatchExcluding(&index1, &results[0], "Oid")
+			index1.Oid = testutils.OidFromObjectName(connectionPool, "public", "simple_table_idx1", backup.TYPE_RELATION)
+			structmatcher.ExpectStructsToMatch(&index1, &results[0])
 		})
 		It("returns a sorted slice of partition indexes ", func() {
 			testutils.SkipIfBefore7(connectionPool)
@@ -238,8 +241,8 @@ PARTITION BY RANGE (date)
 
 			index0 := backup.IndexDefinition{Oid: 0, Name: "fooidx", OwningSchema: "public", OwningTable: "foopart_new", Def: sql.NullString{String: "CREATE INDEX fooidx ON ONLY public.foopart_new USING btree (b)", Valid: true}}
 			index1 := backup.IndexDefinition{Oid: 0, Name: "foopart_new_p1_b_idx", OwningSchema: "public", OwningTable: "foopart_new_p1", Def: sql.NullString{String: "CREATE INDEX foopart_new_p1_b_idx ON public.foopart_new_p1 USING btree (b)", Valid: true}, ParentIndexFQN: "public.fooidx"}
-			index0.Oid = testutils.OidFromObjectName(connectionPool, "", "fooidx", backup.TYPE_INDEX)
-			index1.Oid = testutils.OidFromObjectName(connectionPool, "", "foopart_new_p1_b_idx", backup.TYPE_INDEX)
+			index0.Oid = testutils.OidFromObjectName(connectionPool, "public", "fooidx", backup.TYPE_RELATION)
+			index1.Oid = testutils.OidFromObjectName(connectionPool, "public", "foopart_new_p1_b_idx", backup.TYPE_RELATION)
 			index1.ParentIndex = index0.Oid
 
 			results := backup.GetIndexes(connectionPool)
@@ -261,7 +264,8 @@ PARTITION BY RANGE (date)
 			results := backup.GetIndexes(connectionPool)
 
 			Expect(results).To(HaveLen(1))
-			structmatcher.ExpectStructsToMatchExcluding(&expectedIndex, &results[0], "Oid")
+			expectedIndex.Oid = testutils.OidFromObjectName(connectionPool, "public", "table_with_index_idx", backup.TYPE_RELATION)
+			structmatcher.ExpectStructsToMatch(&expectedIndex, &results[0])
 		})
 	})
 	Describe("GetRules", func() {

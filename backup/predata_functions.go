@@ -9,9 +9,9 @@ package backup
 import (
 	"fmt"
 
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
+	"github.com/warehouse-pg/common-go-libs/gplog"
 )
 
 func PrintCreateFunctionStatement(metadataFile *utils.FileWithByteCount, objToc *toc.TOC, funcDef Function, funcMetadata ObjectMetadata) {

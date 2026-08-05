@@ -1,6 +1,7 @@
 package testutils
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
 	"os"
@@ -8,20 +9,19 @@ import (
 	"strings"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/greenplum-db/gp-common-go-libs/cluster"
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
-	"github.com/greenplum-db/gp-common-go-libs/operating"
-	"github.com/greenplum-db/gp-common-go-libs/structmatcher"
-	"github.com/greenplum-db/gp-common-go-libs/testhelper"
 	"github.com/greenplum-db/gpbackup/backup"
 	"github.com/greenplum-db/gpbackup/filepath"
 	"github.com/greenplum-db/gpbackup/restore"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
-	"github.com/jmoiron/sqlx"
 	"github.com/pkg/errors"
 	"github.com/sergi/go-diff/diffmatchpatch"
+	"github.com/warehouse-pg/common-go-libs/cluster"
+	"github.com/warehouse-pg/common-go-libs/dbconn"
+	"github.com/warehouse-pg/common-go-libs/gplog"
+	"github.com/warehouse-pg/common-go-libs/operating"
+	"github.com/warehouse-pg/common-go-libs/structmatcher"
+	"github.com/warehouse-pg/common-go-libs/testhelper"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -109,10 +109,10 @@ func SetupTestDBConnSegment(dbname string, port int, host string, gpVersion dbco
 	if err != nil {
 		gplog.FatalOnError(err)
 	}
-	conn.ConnPool = make([]*sqlx.DB, 1)
+	conn.ConnPool = make([]*sql.DB, 1)
 	conn.ConnPool[0] = segConn
 
-	conn.Tx = make([]*sqlx.Tx, 1)
+	conn.Tx = make([]*sql.Tx, 1)
 	conn.NumConns = 1
 	version, err := dbconn.InitializeVersion(conn)
 	if err != nil {
@@ -487,6 +487,16 @@ func OidFromCast(connectionPool *dbconn.DBConn, castSource uint32, castTarget ui
 	return result.Oid
 }
 
+/*
+ * OidFromObjectName looks up an object's oid by name, optionally restricted to a
+ * schema. Pass a schema whenever the object type has one: without it the query
+ * matches on name alone, and dbconn.Get rejects a result with more than one row.
+ *
+ * Note that TYPE_INDEX cannot be schema-qualified, because its CatalogTable is
+ * pg_index, which has no namespace column. Indexes are rows in pg_class, so look
+ * them up with TYPE_RELATION and a schema instead; index names are unique within
+ * a schema, which makes that form unambiguous.
+ */
 func OidFromObjectName(connectionPool *dbconn.DBConn, schemaName string, objectName string, params backup.MetadataQueryParams) uint32 {
 	catalogTable := params.CatalogTable
 	if params.OidTable != "" {
@@ -507,6 +517,15 @@ func OidFromObjectName(connectionPool *dbconn.DBConn, schemaName string, objectN
 	return result.Oid
 }
 
+/*
+ * UniqueIDFromObjectName pairs the catalog's oid with the object's own oid, the
+ * same way the production comment and ACL queries derive classid, so params must
+ * be the type whose CatalogTable the production query uses. That rules out
+ * substituting TYPE_RELATION for TYPE_INDEX here the way the index oid lookups
+ * do: it would yield pg_class's oid as the classid where production uses
+ * pg_index's. Callers passing TYPE_INDEX therefore cannot schema-qualify, and
+ * must use index names that are unique across schemas.
+ */
 func UniqueIDFromObjectName(connectionPool *dbconn.DBConn, schemaName string, objectName string, params backup.MetadataQueryParams) backup.UniqueID {
 	query := fmt.Sprintf("SELECT '%s'::regclass::oid", params.CatalogTable)
 	result := struct {
