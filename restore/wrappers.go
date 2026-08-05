@@ -111,7 +111,7 @@ SET default_with_oids = off;
 			setupQuery += "SET gp_use_legacy_hashops = on;\n"
 			gplog.Warn("This backup set was taken on a version of Greenplum prior to 6.x. This restore will use the legacy hash operators when loading data.")
 			gplog.Warn("To use the new Greenplum 6.x default hash operators, these tables will need to be redistributed.")
-			gplog.Warn("For more information, refer to the migration guide located as https://docs.greenplum.org/latest/install_guide/migrate.html.")
+			gplog.Warn("For more information, refer to the hash operator migration notes in the documentation for your release.")
 		}
 	}
 

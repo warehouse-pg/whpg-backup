@@ -29,7 +29,7 @@ var _ = Describe("backup/queries_acl tests", func() {
 			err := backup.PostProcessFunctionConfigs(allFunctions)
 			Expect(err).To(HaveOccurred())
 		})
-		// known bug https://www.pivotaltracker.com/story/show/164575992
+		// pending: known bug, multiple GUCs in one function are not handled
 		PIt("returns correct value for multiple GUCs in one function", func() {
 			allFunctions := []backup.Function{
 				// not clear how the native pg_proc.proconfig field will translate into our Config attribute: assuming we get 2 separate strings
