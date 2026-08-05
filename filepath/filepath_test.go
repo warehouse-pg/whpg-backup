@@ -5,9 +5,9 @@ import (
 	path "path/filepath"
 	"testing"
 
-	"github.com/greenplum-db/gp-common-go-libs/cluster"
-	"github.com/greenplum-db/gp-common-go-libs/operating"
-	"github.com/greenplum-db/gp-common-go-libs/testhelper"
+	"github.com/warehouse-pg/common-go-libs/cluster"
+	"github.com/warehouse-pg/common-go-libs/operating"
+	"github.com/warehouse-pg/common-go-libs/testhelper"
 
 	. "github.com/greenplum-db/gpbackup/filepath"
 	. "github.com/onsi/ginkgo/v2"

@@ -5,11 +5,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
 	"github.com/pkg/errors"
+	"github.com/warehouse-pg/common-go-libs/dbconn"
+	"github.com/warehouse-pg/common-go-libs/gplog"
 )
 
 /* This file contains functions to sort objects that have dependencies among themselves.

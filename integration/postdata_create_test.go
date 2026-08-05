@@ -4,11 +4,11 @@ import (
 	"database/sql"
 	"strings"
 
-	"github.com/greenplum-db/gp-common-go-libs/structmatcher"
-	"github.com/greenplum-db/gp-common-go-libs/testhelper"
 	"github.com/greenplum-db/gpbackup/backup"
 	"github.com/greenplum-db/gpbackup/testutils"
 	"github.com/greenplum-db/gpbackup/toc"
+	"github.com/warehouse-pg/common-go-libs/structmatcher"
+	"github.com/warehouse-pg/common-go-libs/testhelper"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -147,8 +147,8 @@ var _ = Describe("backup integration create statement tests", func() {
 			backup.PrintCreateIndexStatements(backupfile, tocfile, indexes, indexMetadataMap)
 
 			testhelper.AssertQueryRuns(connectionPool, buffer.String())
-			partitionIndex.Oid = testutils.OidFromObjectName(connectionPool, "", "foopart_new_p1_b_idx", backup.TYPE_INDEX)
-			partitionIndex.ParentIndex = testutils.OidFromObjectName(connectionPool, "", "fooidx", backup.TYPE_INDEX)
+			partitionIndex.Oid = testutils.OidFromObjectName(connectionPool, "public", "foopart_new_p1_b_idx", backup.TYPE_RELATION)
+			partitionIndex.ParentIndex = testutils.OidFromObjectName(connectionPool, "public", "fooidx", backup.TYPE_RELATION)
 
 			resultIndexes := backup.GetIndexes(connectionPool)
 			Expect(resultIndexes).To(HaveLen(2))

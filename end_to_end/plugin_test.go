@@ -6,16 +6,16 @@ import (
 	"os/exec"
 	path "path/filepath"
 
-	"github.com/greenplum-db/gp-common-go-libs/cluster"
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/iohelper"
-	"github.com/greenplum-db/gp-common-go-libs/testhelper"
 	"github.com/greenplum-db/gpbackup/filepath"
 	"github.com/greenplum-db/gpbackup/history"
 	"github.com/greenplum-db/gpbackup/testutils"
 	"github.com/greenplum-db/gpbackup/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/warehouse-pg/common-go-libs/cluster"
+	"github.com/warehouse-pg/common-go-libs/dbconn"
+	"github.com/warehouse-pg/common-go-libs/iohelper"
+	"github.com/warehouse-pg/common-go-libs/testhelper"
 )
 
 // patchConfigPluginField rewrites the backup config yaml emitted by gpbackup

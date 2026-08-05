@@ -14,10 +14,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/greenplum-db/gp-common-go-libs/cluster"
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
-	"github.com/greenplum-db/gp-common-go-libs/operating"
+	"github.com/warehouse-pg/common-go-libs/cluster"
+	"github.com/warehouse-pg/common-go-libs/dbconn"
+	"github.com/warehouse-pg/common-go-libs/gplog"
+	"github.com/warehouse-pg/common-go-libs/operating"
 )
 
 type FilePathInfo struct {

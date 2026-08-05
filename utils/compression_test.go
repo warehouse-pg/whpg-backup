@@ -3,11 +3,11 @@ package utils_test
 import (
 	"os/user"
 
-	"github.com/greenplum-db/gp-common-go-libs/cluster"
-	"github.com/greenplum-db/gp-common-go-libs/operating"
-	"github.com/greenplum-db/gp-common-go-libs/structmatcher"
-	"github.com/greenplum-db/gp-common-go-libs/testhelper"
 	"github.com/greenplum-db/gpbackup/utils"
+	"github.com/warehouse-pg/common-go-libs/cluster"
+	"github.com/warehouse-pg/common-go-libs/operating"
+	"github.com/warehouse-pg/common-go-libs/structmatcher"
+	"github.com/warehouse-pg/common-go-libs/testhelper"
 
 	. "github.com/onsi/ginkgo/v2"
 )

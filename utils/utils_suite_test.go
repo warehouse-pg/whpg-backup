@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/greenplum-db/gp-common-go-libs/dbconn"
 	"github.com/greenplum-db/gpbackup/testutils"
+	"github.com/warehouse-pg/common-go-libs/dbconn"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"

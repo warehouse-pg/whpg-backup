@@ -8,9 +8,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/greenplum-db/gp-common-go-libs/gplog"
 	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
+	"github.com/warehouse-pg/common-go-libs/gplog"
 )
 
 const (

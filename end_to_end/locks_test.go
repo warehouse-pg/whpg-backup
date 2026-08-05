@@ -5,11 +5,11 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/greenplum-db/gp-common-go-libs/testhelper"
 	"github.com/greenplum-db/gpbackup/backup"
 	"github.com/greenplum-db/gpbackup/testutils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/warehouse-pg/common-go-libs/testhelper"
 )
 
 var _ = Describe("Deadlock handling", func() {
