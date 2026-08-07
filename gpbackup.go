@@ -19,6 +19,7 @@ func main() {
 		Version: GetVersion(),
 		Run: func(cmd *cobra.Command, args []string) {
 			defer DoTeardown()
+			UseCmdFlags(cmd.Flags())
 			DoFlagValidation(cmd)
 			DoSetup()
 			DoBackup()
@@ -50,10 +51,22 @@ func main() {
 		}}
 	rootCmd.AddCommand(deleteBackupsBeforeCmd)
 
+	var listBackupsCmd = &cobra.Command{
+		Use:   "list-backups",
+		Short: "List backups recorded in the gpbackup history database",
+		Args:  cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			defer DoListBackupsTeardown()
+			UseCmdFlags(cmd.Flags())
+			DoListBackups()
+		}}
+	rootCmd.AddCommand(listBackupsCmd)
+
 	rootCmd.SetArgs(options.HandleSingleDashes(os.Args[1:]))
 	DoInit(rootCmd)
 	DoDeleteBackupInit(deleteBackupCmd)
 	DoDeleteBackupsBeforeInit(deleteBackupsBeforeCmd)
+	DoListBackupsInit(listBackupsCmd)
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(2)
 	}

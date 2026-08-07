@@ -366,22 +366,21 @@ CleanupError:
 	return err
 }
 
-func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error) {
-	// Retreive main backups information. SQLite doesn't have booleans so convert from ints
-	// TODO -- consider passing in a tx instead so that aux tables are coherent with main backups
-	// table. Need to confirm this is possible with sqlite. Unclear if we ever pull in and use aux
-	// table info, so it may not be needed.
+// backupRowScanner is satisfied by both *sql.Row and *sql.Rows, letting a single
+// column-to-struct mapping serve both single-row and multi-row queries below.
+type backupRowScanner interface {
+	Scan(dest ...interface{}) error
+}
 
-	backupQuery := `
-		SELECT timestamp, backup_dir, backup_version, compressed, compression_type, database_name,
-			   database_version, segment_count, data_only, date_deleted, exclude_schema_filtered,
-			   exclude_table_filtered, include_schema_filtered, include_table_filtered, incremental,
-			   leaf_partition_data, metadata_only, plugin, plugin_version, single_data_file, end_time,
-			   without_globals, with_statistics, status, single_backup_dir, command_line, object_count
-		FROM backups WHERE timestamp = ?`
+const backupMainColumns = `timestamp, backup_dir, backup_version, compressed, compression_type, database_name,
+	database_version, segment_count, data_only, date_deleted, exclude_schema_filtered,
+	exclude_table_filtered, include_schema_filtered, include_table_filtered, incremental,
+	leaf_partition_data, metadata_only, plugin, plugin_version, single_data_file, end_time,
+	without_globals, with_statistics, status, single_backup_dir, command_line, object_count`
 
-	backupRow := historyDB.QueryRow(backupQuery, timestamp)
-
+// scanBackupConfig maps one row of the columns listed in backupMainColumns onto a
+// BackupConfig. SQLite doesn't have booleans so convert from ints.
+func scanBackupConfig(row backupRowScanner) (BackupConfig, error) {
 	var backupConfig BackupConfig
 	var isCompressed int
 	var isDataOnly int
@@ -400,7 +399,7 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 	var singleBackupDir sql.NullInt64
 	var commandLine sql.NullString
 	var objectCount sql.NullInt64
-	err := backupRow.Scan(
+	err := row.Scan(
 		&backupConfig.Timestamp, &backupConfig.BackupDir, &backupConfig.BackupVersion,
 		&isCompressed, &backupConfig.CompressionType, &backupConfig.DatabaseName,
 		&backupConfig.DatabaseVersion, &backupConfig.SegmentCount, &isDataOnly,
@@ -409,9 +408,7 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 		&isMetadataOnly, &backupConfig.Plugin, &backupConfig.PluginVersion, &isSingleDataFile,
 		&backupConfig.EndTime, &isWithoutGlobals, &isWithStatistics, &backupConfig.Status,
 		&singleBackupDir, &commandLine, &objectCount)
-	if err == sql.ErrNoRows {
-		return backupConfig, errors.New("timestamp doesn't match any existing backups")
-	} else if err != nil {
+	if err != nil {
 		return backupConfig, err
 	}
 
@@ -431,7 +428,51 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 	backupConfig.CommandLine = commandLine.String
 	backupConfig.ObjectCount = int(objectCount.Int64)
 
-	return backupConfig, err
+	return backupConfig, nil
+}
+
+func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error) {
+	// Retreive main backups information.
+	// TODO -- consider passing in a tx instead so that aux tables are coherent with main backups
+	// table. Need to confirm this is possible with sqlite. Unclear if we ever pull in and use aux
+	// table info, so it may not be needed.
+
+	backupQuery := fmt.Sprintf("SELECT %s FROM backups WHERE timestamp = ?", backupMainColumns)
+	backupRow := historyDB.QueryRow(backupQuery, timestamp)
+
+	backupConfig, err := scanBackupConfig(backupRow)
+	if err == sql.ErrNoRows {
+		return backupConfig, errors.New("timestamp doesn't match any existing backups")
+	} else if err != nil {
+		return backupConfig, err
+	}
+
+	return backupConfig, nil
+}
+
+// ListBackups returns the main-table info (no aux tables/restore plan) for every backup
+// recorded in the history database, most recent first.
+func ListBackups(historyDB *sql.DB) ([]BackupConfig, error) {
+	query := fmt.Sprintf("SELECT %s FROM backups ORDER BY timestamp DESC", backupMainColumns)
+	rows, err := historyDB.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	backups := make([]BackupConfig, 0)
+	for rows.Next() {
+		backupConfig, err := scanBackupConfig(rows)
+		if err != nil {
+			return nil, err
+		}
+		backups = append(backups, backupConfig)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return backups, nil
 }
 
 // Does not check whether dependents have themselves already been deleted; callers needing that

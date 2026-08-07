@@ -58,6 +58,8 @@ const (
 	RESIZE_CLUSTER        = "resize-cluster"
 	NO_INHERITS           = "no-inherits"
 	REPORT_DIR            = "report-dir"
+	SHOW_ALL              = "show-all"
+	FORMAT                = "format"
 )
 
 func SetBackupFlagDefaults(flagSet *pflag.FlagSet) {
@@ -117,6 +119,14 @@ func SetDeleteBackupsBeforeFlagDefaults(flagSet *pflag.FlagSet) {
 	flagSet.String(PLUGIN_CONFIG, "", "The configuration file to use for a plugin")
 	flagSet.Bool(QUIET, false, "Suppress non-warning, non-error log messages")
 	flagSet.Bool(VERBOSE, false, "Print verbose log messages")
+}
+
+func SetListBackupsFlagDefaults(flagSet *pflag.FlagSet) {
+	flagSet.Bool(DEBUG, false, "Print verbose and debug log messages")
+	flagSet.String(FORMAT, "text", "Output format. Valid values are 'text', 'json'")
+	flagSet.Bool("help", false, "Help for list-backups")
+	flagSet.Bool(QUIET, false, "Suppress non-warning, non-error log messages")
+	flagSet.Bool(SHOW_ALL, false, "Also show backups that have been deleted")
 }
 
 func SetRestoreFlagDefaults(flagSet *pflag.FlagSet) {
