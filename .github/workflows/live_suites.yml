@@ -78,6 +78,15 @@ jobs:
 
     env:
       GPHOME: /usr/local/greenplum-db-devel
+      # Shared configure flags, taken from the server repo's own CI. Per-major
+      # additions live in matrix.extra_configure; WHPG6's second pass below
+      # reuses this list, which is why it is not inlined.
+      CONFIGURE_FLAGS: >-
+        --disable-gpperfmon --with-gssapi --enable-mapreduce --enable-orafce
+        --enable-ic-proxy --enable-orca --with-libxml --with-pythonsrc-ext
+        --with-uuid=e2fs --with-pgport=5432 --enable-tap-tests
+        --enable-debug-extensions --with-perl --with-python --with-openssl
+        --with-pam --with-ldap --with-includes= --with-libraries=
       # Where the suites write their logs, collected as an artifact on failure.
       RESULTS_DIR: /tmp/results
 
@@ -136,6 +145,26 @@ jobs:
           localedef -c -i de_DE -f UTF-8 de_DE
           localedef -c -i en_US -f UTF-8 en_US.UTF-8
 
+      # WHPG6 only. ORCA there links against xerces-c 3.1, which the build image
+      # does not ship: without it the build dies with "'XMLCh' does not name a
+      # type". The in-tree helper that builds it is a Python 2 script, and WHPG6
+      # itself has to be built under Python 2 as well -- it ships PyGreSQL 4.0,
+      # which is Python 2 only, and its cluster scripts assume `python` is
+      # Python 2. Mirrors the server repo's own WHPG_6X_STABLE CI.
+      - name: Build Xerces-C and select Python 2
+        if: ${{ steps.gate.outputs.run == 'true' && matrix.major == '6' }}
+        working-directory: gpdb_src
+        run: |
+          set -eu
+          mkdir -p xerces_patch/concourse
+          cp -r src/backend/gporca/concourse/xerces-c xerces_patch/concourse
+          /usr/bin/python2 xerces_patch/concourse/xerces-c/build_xerces.py --output_dir=/usr/local
+          rm -rf build xerces_patch
+          ln -sf /usr/local/lib/libxerces-c-3.1.so /usr/lib64/libxerces-c-3.1.so
+          ldconfig
+          alternatives --set python /usr/bin/python2
+          python --version
+
       - name: Restore ccache
         if: ${{ steps.gate.outputs.run == 'true' }}
         uses: actions/cache@v4
@@ -158,17 +187,27 @@ jobs:
           # differences carried in matrix.extra_configure.
           CC='ccache gcc -m64' CFLAGS='-O2 -g3' \
           LDFLAGS='-Wl,--enable-new-dtags -Wl,--export-dynamic' \
-          ./configure ${{ matrix.extra_configure }} \
-                      --disable-gpperfmon --with-gssapi --enable-mapreduce \
-                      --enable-orafce --enable-ic-proxy --enable-orca --with-libxml \
-                      --with-pythonsrc-ext --with-uuid=e2fs --with-pgport=5432 \
-                      --enable-tap-tests --enable-debug-extensions \
-                      --with-perl --with-python --with-openssl --with-pam --with-ldap \
-                      --with-includes="" --with-libraries="" --disable-rpath \
+          ./configure ${{ matrix.extra_configure }} ${CONFIGURE_FLAGS} --disable-rpath \
                       --prefix="${GPHOME}" --mandir="${GPHOME}/man"
           make -j"$(nproc)"
           make install -j"$(nproc)"
           ccache --show-stats
+
+      - name: Rebuild PL/Python against Python 3 (WHPG6)
+        if: ${{ steps.gate.outputs.run == 'true' && matrix.major == '6' }}
+        working-directory: gpdb_src
+        run: |
+          set -eu
+          # The tree stays the Python 2 build; this only points the generated
+          # makefiles at Python 3 and rebuilds plpython, so plpython3 exists for
+          # tests that use it. The server repo's own CI omits --disable-rpath on
+          # this pass, so this does too.
+          PYTHON=/usr/bin/python3 CC='ccache gcc -m64' CFLAGS='-O2 -g3' \
+          LDFLAGS='-Wl,--enable-new-dtags -Wl,--export-dynamic' \
+          ./configure ${CONFIGURE_FLAGS} \
+                      --prefix="${GPHOME}" --mandir="${GPHOME}/man"
+          make clean -C src/pl/plpython
+          make -j"$(nproc)" install -C src/pl/plpython
 
       - name: Create gpadmin and hand over ownership
         if: ${{ steps.gate.outputs.run == 'true' }}
@@ -176,9 +215,13 @@ jobs:
           set -eu
           # setup_gpadmin_user.bash expects the tree at ./gpdb_src and reachable
           # from gpadmin's home, the same layout the server repo's CI arranges.
+          # The build image already has a gpadmin and the setup script does not
+          # handle an existing user, so drop it first -- as the server repo's CI
+          # does for the same reason.
+          userdel gpadmin 2>/dev/null || true
           ln -sfn "${GITHUB_WORKSPACE}/gpdb_src" /home/gpadmin/gpdb_src
-          chown -h gpadmin:gpadmin /home/gpadmin/gpdb_src
           TEST_OS=centos gpdb_src/concourse/scripts/setup_gpadmin_user.bash
+          chown -h gpadmin:gpadmin /home/gpadmin/gpdb_src
           # gpadmin runs the cluster, builds gpbackup, and -- via `make
           # integration` -> build_test -- installs test extensions into GPHOME.
           chown -R gpadmin:gpadmin "${GPHOME}" "${GITHUB_WORKSPACE}"
