@@ -66,11 +66,15 @@ jobs:
           - major: "7"
             el: "9"
             server_ref: WHPG_7_5_STABLE
+            # Flags each branch's own CI passes; 6X builds without these two, and
+            # --with-quicklz actively fails there ("quicklz library not found").
+            extra_configure: "--with-quicklz --with-llvm"
           # WHPG6 on EL8: it needs a python2 runtime to configure, and EL9 no
           # longer ships one.
           - major: "6"
             el: "8"
             server_ref: WHPG_6X_STABLE
+            extra_configure: ""
 
     env:
       GPHOME: /usr/local/greenplum-db-devel
@@ -113,7 +117,7 @@ jobs:
           fetch-depth: 1024
           fetch-tags: true
 
-      - name: Extra packages for this major
+      - name: Extra packages and locales
         if: ${{ steps.gate.outputs.run == 'true' }}
         run: |
           set -eu
@@ -124,6 +128,13 @@ jobs:
           elif [ ! -e /usr/bin/pytest ] && [ -e /usr/bin/pytest-3 ]; then
             ln -s /usr/bin/pytest-3 /usr/bin/pytest
           fi
+          # The integration suite creates collations and databases in de_DE, so
+          # that locale has to exist in the container: without it those specs fail
+          # with 'could not create locale "de_DE"'. The image is built for the
+          # server's own tests, which do not need it.
+          yum install -y --setopt=keepcache=1 glibc-locale-source glibc-langpack-de glibc-langpack-en
+          localedef -c -i de_DE -f UTF-8 de_DE
+          localedef -c -i en_US -f UTF-8 en_US.UTF-8
 
       - name: Restore ccache
         if: ${{ steps.gate.outputs.run == 'true' }}
@@ -143,14 +154,15 @@ jobs:
           ccache --set-config=max_size=1G
           ccache --set-config=compression=true
           ccache --zero-stats
-          # Flags copied from the server repo's own CI. A few are recognised only
-          # by WHPG6 and merely warn on 7, which is why one list serves both.
+          # Flags copied from the server repo's own CI, with the per-major
+          # differences carried in matrix.extra_configure.
           CC='ccache gcc -m64' CFLAGS='-O2 -g3' \
           LDFLAGS='-Wl,--enable-new-dtags -Wl,--export-dynamic' \
-          ./configure --with-quicklz --disable-gpperfmon --with-gssapi --enable-mapreduce \
+          ./configure ${{ matrix.extra_configure }} \
+                      --disable-gpperfmon --with-gssapi --enable-mapreduce \
                       --enable-orafce --enable-ic-proxy --enable-orca --with-libxml \
                       --with-pythonsrc-ext --with-uuid=e2fs --with-pgport=5432 \
-                      --enable-tap-tests --with-llvm --enable-debug-extensions \
+                      --enable-tap-tests --enable-debug-extensions \
                       --with-perl --with-python --with-openssl --with-pam --with-ldap \
                       --with-includes="" --with-libraries="" --disable-rpath \
                       --prefix="${GPHOME}" --mandir="${GPHOME}/man"
@@ -226,7 +238,10 @@ jobs:
           # shell.
           cat > /tmp/run-suites.bash <<'SCRIPT'
           #!/bin/bash
-          set -eux
+          # pipefail matters: the suites below are piped through tee, and without
+          # it the step would take tee's exit code and report a failing suite as a
+          # success.
+          set -euxo pipefail
           export GOPATH="${HOME}/go"
           export PATH="/usr/local/go/bin:${GOPATH}/bin:${PATH}"
           mkdir -p "${GOPATH}/bin"
