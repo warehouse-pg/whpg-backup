@@ -405,4 +405,31 @@ hostname: "myhostname"`), nil
 			Expect(err.Error()).To(Equal("plugin config file is formatted incorrectly"))
 		})
 	})
+	Describe("DeleteBackup", func() {
+		It("invokes the plugin's delete_backup command with the config path and timestamp", func() {
+			scriptPath := filepath.Join(tempDir, "fake_plugin.sh")
+			outputPath := filepath.Join(tempDir, "fake_plugin_out.txt")
+			script := fmt.Sprintf("#!/bin/bash\necho \"$@\" > %s\n", outputPath)
+			Expect(ioutil.WriteFile(scriptPath, []byte(script), 0755)).To(Succeed())
+
+			subject.ExecutablePath = scriptPath
+			err := subject.DeleteBackup("20260101010101")
+			Expect(err).To(Not(HaveOccurred()))
+
+			contents, err := ioutil.ReadFile(outputPath)
+			Expect(err).To(Not(HaveOccurred()))
+			Expect(strings.TrimSpace(string(contents))).To(Equal(fmt.Sprintf("delete_backup %s 20260101010101", subject.ConfigPath)))
+		})
+
+		It("returns an error including the plugin's output when the plugin fails", func() {
+			scriptPath := filepath.Join(tempDir, "fake_plugin.sh")
+			script := "#!/bin/bash\necho \"delete failed\" 1>&2\nexit 1\n"
+			Expect(ioutil.WriteFile(scriptPath, []byte(script), 0755)).To(Succeed())
+
+			subject.ExecutablePath = scriptPath
+			err := subject.DeleteBackup("20260101010101")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("delete failed"))
+		})
+	})
 })

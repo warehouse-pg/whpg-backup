@@ -301,4 +301,63 @@ var _ = Describe("backup/history tests", func() {
 			Expect(config.ObjectCount).To(Equal(0))
 		})
 	})
+
+	Describe("GetBackupDependents", func() {
+		It("returns no dependents when nothing restores against this backup", func() {
+			db, _ := history.InitializeHistoryDatabase(historyDBPath)
+			defer db.Close()
+			err := history.StoreBackupHistory(db, &testConfig1)
+			Expect(err).To(BeNil())
+
+			dependents, err := history.GetBackupDependents(db, testConfig1.Timestamp)
+			Expect(err).To(BeNil())
+			Expect(dependents).To(BeEmpty())
+		})
+
+		It("returns a backup whose restore plan references the given timestamp", func() {
+			db, _ := history.InitializeHistoryDatabase(historyDBPath)
+			defer db.Close()
+			err := history.StoreBackupHistory(db, &testConfig1)
+			Expect(err).To(BeNil())
+			err = history.StoreBackupHistory(db, &testConfig2)
+			Expect(err).To(BeNil())
+
+			dependents, err := history.GetBackupDependents(db, testConfig1.Timestamp)
+			Expect(err).To(BeNil())
+			Expect(dependents).To(ConsistOf(testConfig2.Timestamp))
+		})
+
+		It("excludes the backup's own timestamp from its dependents", func() {
+			db, _ := history.InitializeHistoryDatabase(historyDBPath)
+			defer db.Close()
+			err := history.StoreBackupHistory(db, &testConfig2)
+			Expect(err).To(BeNil())
+
+			dependents, err := history.GetBackupDependents(db, testConfig2.Timestamp)
+			Expect(err).To(BeNil())
+			Expect(dependents).To(BeEmpty())
+		})
+	})
+
+	Describe("SetDateDeleted", func() {
+		It("updates only the targeted backup's date_deleted", func() {
+			db, _ := history.InitializeHistoryDatabase(historyDBPath)
+			defer db.Close()
+			err := history.StoreBackupHistory(db, &testConfig1)
+			Expect(err).To(BeNil())
+			err = history.StoreBackupHistory(db, &testConfig2)
+			Expect(err).To(BeNil())
+
+			err = history.SetDateDeleted(db, testConfig1.Timestamp, "20260101010101")
+			Expect(err).To(BeNil())
+
+			config1, err := history.GetBackupConfig(testConfig1.Timestamp, db)
+			Expect(err).To(BeNil())
+			Expect(config1.DateDeleted).To(Equal("20260101010101"))
+
+			config2, err := history.GetBackupConfig(testConfig2.Timestamp, db)
+			Expect(err).To(BeNil())
+			Expect(config2.DateDeleted).To(Equal(""))
+		})
+	})
 })
