@@ -160,6 +160,12 @@ jobs:
           cp -r src/backend/gporca/concourse/xerces-c xerces_patch/concourse
           /usr/bin/python2 xerces_patch/concourse/xerces-c/build_xerces.py --output_dir=/usr/local
           rm -rf build xerces_patch
+          # The linker resolves -lxerces-c by the unversioned name. build_xerces.py
+          # only installs the versioned/SONAME files, so without this link ld falls
+          # through to the system xerces in /usr/lib64 -- which is a different
+          # major, giving "undefined reference to xercesc_3_1::..." at link time
+          # even though the 3.1 headers were used to compile.
+          ln -sf /usr/local/lib/libxerces-c-3.1.so /usr/local/lib/libxerces-c.so
           ln -sf /usr/local/lib/libxerces-c-3.1.so /usr/lib64/libxerces-c-3.1.so
           ldconfig
           alternatives --set python /usr/bin/python2
@@ -208,6 +214,19 @@ jobs:
                       --prefix="${GPHOME}" --mandir="${GPHOME}/man"
           make clean -C src/pl/plpython
           make -j"$(nproc)" install -C src/pl/plpython
+
+      - name: Build gpcloud
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        working-directory: gpdb_src
+        run: |
+          set -eu
+          # The external-protocol specs declare functions as
+          # '$libdir/gps3ext.so', and CREATE FUNCTION ... LANGUAGE C validates
+          # that the library exists and exports the symbol. The released packages
+          # ship it, but a source build does not install gpcontrib by default, so
+          # six integration specs fail without this.
+          make -C gpcontrib/gpcloud install
+          ls -l "${GPHOME}/lib/postgresql/gps3ext.so"
 
       - name: Create gpadmin and hand over ownership
         if: ${{ steps.gate.outputs.run == 'true' }}
