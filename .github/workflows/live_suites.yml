@@ -68,13 +68,18 @@ jobs:
             server_ref: WHPG_7_5_STABLE
             # Flags each branch's own CI passes; 6X builds without these two, and
             # --with-quicklz actively fails there ("quicklz library not found").
-            extra_configure: "--with-quicklz --with-llvm"
+            extra_configure: "--with-quicklz --with-llvm --enable-orca"
           # WHPG6 on EL8: it needs a python2 runtime to configure, and EL9 no
           # longer ships one.
           - major: "6"
             el: "8"
             server_ref: WHPG_6X_STABLE
-            extra_configure: ""
+            # --disable-orca: ORCA on 6 links against xerces-c 3.1, which the
+            # build image does not carry, and building it in-tree proved a
+            # rabbit hole. These suites read catalog metadata, so the optimizer
+            # in use does not affect what they assert -- and WHPG6 with ORCA is
+            # covered by the packaging repo's lane against the released package.
+            extra_configure: "--disable-orca"
 
     env:
       GPHOME: /usr/local/greenplum-db-devel
@@ -83,7 +88,7 @@ jobs:
       # reuses this list, which is why it is not inlined.
       CONFIGURE_FLAGS: >-
         --disable-gpperfmon --with-gssapi --enable-mapreduce --enable-orafce
-        --enable-ic-proxy --enable-orca --with-libxml --with-pythonsrc-ext
+        --enable-ic-proxy --with-libxml --with-pythonsrc-ext
         --with-uuid=e2fs --with-pgport=5432 --enable-tap-tests
         --enable-debug-extensions --with-perl --with-python --with-openssl
         --with-pam --with-ldap --with-includes= --with-libraries=
@@ -145,29 +150,13 @@ jobs:
           localedef -c -i de_DE -f UTF-8 de_DE
           localedef -c -i en_US -f UTF-8 en_US.UTF-8
 
-      # WHPG6 only. ORCA there links against xerces-c 3.1, which the build image
-      # does not ship: without it the build dies with "'XMLCh' does not name a
-      # type". The in-tree helper that builds it is a Python 2 script, and WHPG6
-      # itself has to be built under Python 2 as well -- it ships PyGreSQL 4.0,
+      # WHPG6 only. It has to be built under Python 2 -- it ships PyGreSQL 4.0,
       # which is Python 2 only, and its cluster scripts assume `python` is
       # Python 2. Mirrors the server repo's own WHPG_6X_STABLE CI.
-      - name: Build Xerces-C and select Python 2
+      - name: Select Python 2
         if: ${{ steps.gate.outputs.run == 'true' && matrix.major == '6' }}
-        working-directory: gpdb_src
         run: |
           set -eu
-          mkdir -p xerces_patch/concourse
-          cp -r src/backend/gporca/concourse/xerces-c xerces_patch/concourse
-          /usr/bin/python2 xerces_patch/concourse/xerces-c/build_xerces.py --output_dir=/usr/local
-          rm -rf build xerces_patch
-          # The linker resolves -lxerces-c by the unversioned name. build_xerces.py
-          # only installs the versioned/SONAME files, so without this link ld falls
-          # through to the system xerces in /usr/lib64 -- which is a different
-          # major, giving "undefined reference to xercesc_3_1::..." at link time
-          # even though the 3.1 headers were used to compile.
-          ln -sf /usr/local/lib/libxerces-c-3.1.so /usr/local/lib/libxerces-c.so
-          ln -sf /usr/local/lib/libxerces-c-3.1.so /usr/lib64/libxerces-c-3.1.so
-          ldconfig
           alternatives --set python /usr/bin/python2
           python --version
 
@@ -210,7 +199,7 @@ jobs:
           # this pass, so this does too.
           PYTHON=/usr/bin/python3 CC='ccache gcc -m64' CFLAGS='-O2 -g3' \
           LDFLAGS='-Wl,--enable-new-dtags -Wl,--export-dynamic' \
-          ./configure ${CONFIGURE_FLAGS} \
+          ./configure ${{ matrix.extra_configure }} ${CONFIGURE_FLAGS} \
                       --prefix="${GPHOME}" --mandir="${GPHOME}/man"
           make clean -C src/pl/plpython
           make -j"$(nproc)" install -C src/pl/plpython
@@ -245,6 +234,12 @@ jobs:
           # integration` -> build_test -- installs test extensions into GPHOME.
           chown -R gpadmin:gpadmin "${GPHOME}" "${GITHUB_WORKSPACE}"
           mkdir -p "${RESULTS_DIR}" && chmod 1777 "${RESULTS_DIR}"
+          # One e2e spec connects straight to a segment and builds its own URL
+          # with an empty host, so pgx falls back to its default socket
+          # directory. Create it, writable by gpadmin, and the suites link the
+          # cluster's sockets into it once the cluster is up.
+          mkdir -p /var/run/postgresql
+          chown gpadmin:gpadmin /var/run/postgresql
 
       - name: Build dummy_seclabel
         if: ${{ steps.gate.outputs.run == 'true' }}
@@ -311,6 +306,16 @@ jobs:
           source "${WORKSPACE}/gpdb_src/gpAux/gpdemo/gpdemo-env.sh"
 
           psql postgres -c 'select version();'
+
+          # Expose every instance's socket where a host-less pgx connection will
+          # look for it. Read the directories from the server rather than
+          # assuming, since a source build and a package differ here.
+          for d in $(psql -At -d postgres -c 'SHOW unix_socket_directories' | tr ',' ' '); do
+              for sock in "${d}"/.s.PGSQL.*; do
+                  [ -e "${sock}" ] && ln -sf "${sock}" /var/run/postgresql/ || true
+              done
+          done
+          ls -l /var/run/postgresql/ | head -20
 
           cd "${WORKSPACE}/whpg-backup"
           make depend
