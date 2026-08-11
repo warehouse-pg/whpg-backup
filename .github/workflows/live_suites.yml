@@ -136,6 +136,29 @@ jobs:
           fetch-depth: 1024
           fetch-tags: true
 
+      - name: Make the release tag visible to getversion
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        run: |
+          set -eu
+          # The server's getversion runs a bare `git describe`, which considers
+          # only annotated tags, and otherwise falls back to configure's
+          # PACKAGE_VERSION. The release tags are lightweight, so that fallback is
+          # what we got: the 6 lane called itself 6.0.0-beta.1 (the literal value
+          # in the 6 branch's configure) and the 7 lane found an older annotated
+          # tag and called itself 7.2.1.
+          #
+          # That is not cosmetic -- gpbackup gates specs on the server version, so
+          # both lanes were running the wrong set of expectations, and on 6 a spec
+          # that only applies to 6.0.0-6.14.0 ran against a 6.27 server.
+          #
+          # Re-create the tag locally as annotated at the same commit. Nothing is
+          # pushed; this only affects what the build calls itself.
+          git -C gpdb_src config user.email ci@localhost
+          git -C gpdb_src config user.name "CI"
+          git -C gpdb_src tag -f -a '${{ matrix.server_ref }}' -m 'annotated so getversion can describe it' HEAD
+          echo "describe: $(git -C gpdb_src describe)"
+          echo "getversion: $(cd gpdb_src && ./getversion)"
+
       - name: Extra packages and locales
         if: ${{ steps.gate.outputs.run == 'true' }}
         run: |
