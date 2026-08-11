@@ -62,10 +62,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # WHPG7 on EL9.
+          # WHPG7 on EL9. Pinned to the release tag rather than the branch head,
+          # even though they are the same commit: the server derives its version
+          # from `git describe`, and in a shallow clone of the branch the release
+          # tag is not fetched, so it reported 7.2.1 -- an old tag 132 commits
+          # back. gpbackup gates specs on the server version, so a wrong version
+          # silently runs the wrong expectations.
           - major: "7"
             el: "9"
-            server_ref: WHPG_7_5_STABLE
+            server_ref: 7.5.0-WHPG
             # Flags each branch's own CI passes; 6X builds without these two, and
             # --with-quicklz actively fails there ("quicklz library not found").
             extra_configure: "--with-quicklz --with-llvm --enable-orca"
@@ -73,7 +78,7 @@ jobs:
           # longer ships one.
           - major: "6"
             el: "8"
-            server_ref: WHPG_6X_STABLE
+            server_ref: 6.27.5-WHPG
             # --disable-orca: ORCA on 6 links against xerces-c 3.1, which the
             # build image does not carry, and building it in-tree proved a
             # rabbit hole. These suites read catalog metadata, so the optimizer
