@@ -800,7 +800,7 @@ var _ = Describe("backup and restore end to end tests", func() {
 			// ok. Connect in utility mode to seg1.
 			segmentOne := backupCluster.ByContent[1]
 			port := segmentOne[0].Port
-			segConn := testutils.SetupTestDBConnSegment("restoredb", port, "", backupConn.Version)
+			segConn := testutils.SetupTestDBConnSegment("restoredb", port, segmentOne[0].Hostname, backupConn.Version)
 			defer segConn.Close()
 
 			// Take ACCESS EXCLUSIVE LOCK on public.corrupt_table which will

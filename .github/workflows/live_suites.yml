@@ -48,157 +48,95 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        env:
+          CHOICE: ${{ github.event.inputs.majors || '6 and 7' }}
+        run: |
+          if [ "$CHOICE" = "6 and 7" ]; then
+            echo 'matrix=[{"major":"7","el":"9","server_ref":"7.5.0-WHPG","extra_configure":"--with-quicklz --with-llvm --enable-orca"},{"major":"6","el":"8","server_ref":"6.27.5-WHPG","extra_configure":"--disable-orca"}]' >> $GITHUB_OUTPUT
+          elif [ "$CHOICE" = "7 only" ]; then
+            echo 'matrix=[{"major":"7","el":"9","server_ref":"7.5.0-WHPG","extra_configure":"--with-quicklz --with-llvm --enable-orca"}]' >> $GITHUB_OUTPUT
+          else
+            echo 'matrix=[{"major":"6","el":"8","server_ref":"6.27.5-WHPG","extra_configure":"--disable-orca"}]' >> $GITHUB_OUTPUT
+          fi
+
   live_suites:
     name: WHPG${{ matrix.major }} integration + e2e
-    # Compiling the server dominates the runtime; the e2e suite itself takes
-    # around 25 minutes. The server repo allows 180 for a comparable job.
+    needs: setup
     timeout-minutes: 180
     runs-on: ubuntu-latest
     container:
-      # Public image, same org: pulled anonymously, no login step.
       image: ghcr.io/warehouse-pg/whpg-rocky${{ matrix.el }}-build
-
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # WHPG7 on EL9. Pinned to the release tag rather than the branch head,
-          # even though they are the same commit: the server derives its version
-          # from `git describe`, and in a shallow clone of the branch the release
-          # tag is not fetched, so it reported 7.2.1 -- an old tag 132 commits
-          # back. gpbackup gates specs on the server version, so a wrong version
-          # silently runs the wrong expectations.
-          - major: "7"
-            el: "9"
-            server_ref: 7.5.0-WHPG
-            # Flags each branch's own CI passes; 6X builds without these two, and
-            # --with-quicklz actively fails there ("quicklz library not found").
-            extra_configure: "--with-quicklz --with-llvm --enable-orca"
-          # WHPG6 on EL8: it needs a python2 runtime to configure, and EL9 no
-          # longer ships one.
-          - major: "6"
-            el: "8"
-            server_ref: 6.27.5-WHPG
-            # --disable-orca: ORCA on 6 links against xerces-c 3.1, which the
-            # build image does not carry, and building it in-tree proved a
-            # rabbit hole. These suites read catalog metadata, so the optimizer
-            # in use does not affect what they assert -- and WHPG6 with ORCA is
-            # covered by the packaging repo's lane against the released package.
-            extra_configure: "--disable-orca"
-
+        include: ${{ fromJson(needs.setup.outputs.matrix) }}
     env:
       GPHOME: /usr/local/greenplum-db-devel
-      # Shared configure flags, taken from the server repo's own CI. Per-major
-      # additions live in matrix.extra_configure; WHPG6's second pass below
-      # reuses this list, which is why it is not inlined.
       CONFIGURE_FLAGS: >-
         --disable-gpperfmon --with-gssapi --enable-mapreduce --enable-orafce
         --enable-ic-proxy --with-libxml --with-pythonsrc-ext
         --with-uuid=e2fs --with-pgport=5432 --enable-tap-tests
         --enable-debug-extensions --with-perl --with-python --with-openssl
         --with-pam --with-ldap --with-includes= --with-libraries=
-      # Where the suites write their logs, collected as an artifact on failure.
       RESULTS_DIR: /tmp/results
-
     steps:
-      - name: Skip majors not requested
-        id: gate
-        env:
-          CHOICE: ${{ github.event.inputs.majors || '6 and 7' }}
-          MAJOR: ${{ matrix.major }}
-        run: |
-          set -eu
-          case "${CHOICE}" in
-            "6 and 7") run=true ;;
-            "7 only")  [ "${MAJOR}" = "7" ] && run=true || run=false ;;
-            "6 only")  [ "${MAJOR}" = "6" ] && run=true || run=false ;;
-            *)         run=true ;;
-          esac
-          echo "run=${run}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout whpg-backup
-        if: ${{ steps.gate.outputs.run == 'true' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: whpg-backup
-          # The version stamped into the binaries comes from git describe.
           fetch-depth: 0
 
       - name: Checkout WarehousePG ${{ matrix.server_ref }}
-        if: ${{ steps.gate.outputs.run == 'true' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: warehouse-pg/warehouse-pg
           ref: ${{ matrix.server_ref }}
           path: gpdb_src
           submodules: recursive
-          # Enough history for the server's own getversion to describe a tag.
           fetch-depth: 1024
           fetch-tags: true
 
       - name: Make the release tag visible to getversion
-        if: ${{ steps.gate.outputs.run == 'true' }}
         run: |
           set -eu
-          # The server's getversion runs a bare `git describe`, which considers
-          # only annotated tags, and otherwise falls back to configure's
-          # PACKAGE_VERSION. The release tags are lightweight, so that fallback is
-          # what we got: the 6 lane called itself 6.0.0-beta.1 (the literal value
-          # in the 6 branch's configure) and the 7 lane found an older annotated
-          # tag and called itself 7.2.1.
-          #
-          # That is not cosmetic -- gpbackup gates specs on the server version, so
-          # both lanes were running the wrong set of expectations, and on 6 a spec
-          # that only applies to 6.0.0-6.14.0 ran against a 6.27 server.
-          #
-          # Re-create the tag locally as annotated at the same commit. Nothing is
-          # pushed; this only affects what the build calls itself.
-          git -C gpdb_src config user.email ci@localhost
-          git -C gpdb_src config user.name "CI"
-          git -C gpdb_src tag -f -a '${{ matrix.server_ref }}' -m 'annotated so getversion can describe it' HEAD
-          echo "describe: $(git -C gpdb_src describe)"
+          sed -i -E 's/git describe( --tags)?/git describe --tags/g' gpdb_src/getversion
+          echo "describe: $(git -C gpdb_src describe --tags)"
           echo "getversion: $(cd gpdb_src && ./getversion)"
 
       - name: Extra packages and locales
-        if: ${{ steps.gate.outputs.run == 'true' }}
         run: |
           set -eu
-          # The image carries the build dependencies; only these differ by major,
-          # matching what the server repo's CI does for itself.
           if [ "${{ matrix.major }}" = "6" ]; then
             yum install -y --setopt=keepcache=1 python2-devel
           elif [ ! -e /usr/bin/pytest ] && [ -e /usr/bin/pytest-3 ]; then
             ln -s /usr/bin/pytest-3 /usr/bin/pytest
           fi
-          # The integration suite creates collations and databases in de_DE, so
-          # that locale has to exist in the container: without it those specs fail
-          # with 'could not create locale "de_DE"'. The image is built for the
-          # server's own tests, which do not need it.
           yum install -y --setopt=keepcache=1 glibc-locale-source glibc-langpack-de glibc-langpack-en
           localedef -c -i de_DE -f UTF-8 de_DE
           localedef -c -i en_US -f UTF-8 en_US.UTF-8
 
-      # WHPG6 only. It has to be built under Python 2 -- it ships PyGreSQL 4.0,
-      # which is Python 2 only, and its cluster scripts assume `python` is
-      # Python 2. Mirrors the server repo's own WHPG_6X_STABLE CI.
       - name: Select Python 2
-        if: ${{ steps.gate.outputs.run == 'true' && matrix.major == '6' }}
+        if: ${{ matrix.major == '6' }}
         run: |
           set -eu
           alternatives --set python /usr/bin/python2
           python --version
 
       - name: Restore ccache
-        if: ${{ steps.gate.outputs.run == 'true' }}
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.ccache
-          key: ccache-live-suites-el${{ matrix.el }}-whpg${{ matrix.major }}-${{ github.sha }}
+          key: ccache-live-suites-el${{ matrix.el }}-whpg${{ matrix.major }}-${{ matrix.server_ref }}
           restore-keys: |
             ccache-live-suites-el${{ matrix.el }}-whpg${{ matrix.major }}-
 
       - name: Build and install the server
-        if: ${{ steps.gate.outputs.run == 'true' }}
         working-directory: gpdb_src
         run: |
           set -eu
@@ -206,8 +144,6 @@ jobs:
           ccache --set-config=max_size=1G
           ccache --set-config=compression=true
           ccache --zero-stats
-          # Flags copied from the server repo's own CI, with the per-major
-          # differences carried in matrix.extra_configure.
           CC='ccache gcc -m64' CFLAGS='-O2 -g3' \
           LDFLAGS='-Wl,--enable-new-dtags -Wl,--export-dynamic' \
           ./configure ${{ matrix.extra_configure }} ${CONFIGURE_FLAGS} --disable-rpath \
@@ -217,14 +153,10 @@ jobs:
           ccache --show-stats
 
       - name: Rebuild PL/Python against Python 3 (WHPG6)
-        if: ${{ steps.gate.outputs.run == 'true' && matrix.major == '6' }}
+        if: ${{ matrix.major == '6' }}
         working-directory: gpdb_src
         run: |
           set -eu
-          # The tree stays the Python 2 build; this only points the generated
-          # makefiles at Python 3 and rebuilds plpython, so plpython3 exists for
-          # tests that use it. The server repo's own CI omits --disable-rpath on
-          # this pass, so this does too.
           PYTHON=/usr/bin/python3 CC='ccache gcc -m64' CFLAGS='-O2 -g3' \
           LDFLAGS='-Wl,--enable-new-dtags -Wl,--export-dynamic' \
           ./configure ${{ matrix.extra_configure }} ${CONFIGURE_FLAGS} \
@@ -233,50 +165,25 @@ jobs:
           make -j"$(nproc)" install -C src/pl/plpython
 
       - name: Build gpcloud
-        if: ${{ steps.gate.outputs.run == 'true' }}
         working-directory: gpdb_src
         run: |
           set -eu
-          # The external-protocol specs declare functions as
-          # '$libdir/gps3ext.so', and CREATE FUNCTION ... LANGUAGE C validates
-          # that the library exists and exports the symbol. The released packages
-          # ship it, but a source build does not install gpcontrib by default, so
-          # six integration specs fail without this.
           make -C gpcontrib/gpcloud install
           ls -l "${GPHOME}/lib/postgresql/gps3ext.so"
 
       - name: Create gpadmin and hand over ownership
-        if: ${{ steps.gate.outputs.run == 'true' }}
         run: |
           set -eu
-          # setup_gpadmin_user.bash expects the tree at ./gpdb_src and reachable
-          # from gpadmin's home, the same layout the server repo's CI arranges.
-          # The build image already has a gpadmin and the setup script does not
-          # handle an existing user, so drop it first -- as the server repo's CI
-          # does for the same reason.
           userdel gpadmin 2>/dev/null || true
           ln -sfn "${GITHUB_WORKSPACE}/gpdb_src" /home/gpadmin/gpdb_src
           TEST_OS=centos gpdb_src/concourse/scripts/setup_gpadmin_user.bash
           chown -h gpadmin:gpadmin /home/gpadmin/gpdb_src
-          # gpadmin runs the cluster, builds gpbackup, and -- via `make
-          # integration` -> build_test -- installs test extensions into GPHOME.
           chown -R gpadmin:gpadmin "${GPHOME}" "${GITHUB_WORKSPACE}"
           mkdir -p "${RESULTS_DIR}" && chmod 1777 "${RESULTS_DIR}"
-          # One e2e spec connects straight to a segment and builds its own URL
-          # with an empty host, so pgx falls back to its default socket
-          # directory. Create it, writable by gpadmin, and the suites link the
-          # cluster's sockets into it once the cluster is up.
-          mkdir -p /var/run/postgresql
-          chown gpadmin:gpadmin /var/run/postgresql
 
       - name: Build dummy_seclabel
-        if: ${{ steps.gate.outputs.run == 'true' }}
         run: |
           set -eu
-          # The SECURITY LABEL specs need a "dummy" label provider. It is a
-          # server-tree module, built against the server we just installed. PG9.5
-          # moved it out of contrib/, so WHPG6 uses the older path. Built before
-          # the cluster exists so it can be preloaded at initdb time.
           if [ "${{ matrix.major }}" = "6" ]; then
             dir="${GITHUB_WORKSPACE}/gpdb_src/contrib/dummy_seclabel"
           else
@@ -285,17 +192,8 @@ jobs:
           su gpadmin -c "source ${GPHOME}/greenplum_path.sh; cd '${dir}'; USE_PGXS=1 make install with_llvm=0"
 
       - name: Create the demo cluster
-        if: ${{ steps.gate.outputs.run == 'true' }}
         run: |
-          # Deliberately not "set -u": common.bash tests MAKE_TEST_COMMAND without
-          # guarding it, so an unset variable would abort the step. Defined empty
-          # below for the same reason.
           set -e
-          # make_cluster comes from the server tree, so the cluster is created the
-          # same way the server's own CI creates it. It expects ./gpdb_src.
-          # BLDWRAP_POSTGRES_CONF_ADDONS reaches gpinitsystem as "-p <addons>", so
-          # the label provider is loaded from the first start and no restart is
-          # needed to enable it.
           source gpdb_src/concourse/scripts/common.bash
           export MAKE_TEST_COMMAND=""
           export WITH_MIRRORS=true
@@ -303,29 +201,18 @@ jobs:
           make_cluster
 
       - name: Install Go
-        if: ${{ steps.gate.outputs.run == 'true' }}
         run: |
           set -eu
-          # Track go.mod rather than pinning a version here, so a bump in the
-          # module cannot leave this behind.
           go_version=$(awk '/^go /{print $2; exit}' whpg-backup/go.mod)
           curl -fsSL "https://go.dev/dl/go${go_version}.linux-amd64.tar.gz" -o /tmp/go.tgz
           rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz && rm -f /tmp/go.tgz
           /usr/local/go/bin/go version
 
       - name: Build gpbackup and run the suites
-        if: ${{ steps.gate.outputs.run == 'true' }}
         run: |
           set -eu
-          # Run from a file rather than piping into su: gpinitsystem's children
-          # and ginkgo both read stdin, and a script arriving on stdin gets
-          # swallowed. Also keeps the env explicit instead of relying on a login
-          # shell.
           cat > /tmp/run-suites.bash <<'SCRIPT'
           #!/bin/bash
-          # pipefail matters: the suites below are piped through tee, and without
-          # it the step would take tee's exit code and report a failing suite as a
-          # success.
           set -euxo pipefail
           export GOPATH="${HOME}/go"
           export PATH="/usr/local/go/bin:${GOPATH}/bin:${PATH}"
@@ -335,21 +222,9 @@ jobs:
 
           psql postgres -c 'select version();'
 
-          # Expose every instance's socket where a host-less pgx connection will
-          # look for it. Read the directories from the server rather than
-          # assuming, since a source build and a package differ here.
-          for d in $(psql -At -d postgres -c 'SHOW unix_socket_directories' | tr ',' ' '); do
-              for sock in "${d}"/.s.PGSQL.*; do
-                  [ -e "${sock}" ] && ln -sf "${sock}" /var/run/postgresql/ || true
-              done
-          done
-          ls -l /var/run/postgresql/ | head -20
-
           cd "${WORKSPACE}/whpg-backup"
           make depend
           make build
-          # gpbackup shells out to $GPHOME/bin/gpbackup_helper on every segment,
-          # so the binaries have to be on the cluster's path, not just in GOPATH.
           cp "${GOPATH}/bin/gpbackup" "${GOPATH}/bin/gprestore" "${GOPATH}/bin/gpbackup_helper" "${GPHOME}/bin/"
           gpbackup --version
 
@@ -357,11 +232,10 @@ jobs:
           make end_to_end 2>&1 | tee "${RESULTS_DIR}/end_to_end.log"
           SCRIPT
           chmod +x /tmp/run-suites.bash
-          # ginkgo's --keep-going means a failing spec still exits non-zero here.
           su gpadmin -c "GPHOME='${GPHOME}' WORKSPACE='${GITHUB_WORKSPACE}' RESULTS_DIR='${RESULTS_DIR}' bash /tmp/run-suites.bash"
 
       - name: Collect cluster logs on failure
-        if: ${{ failure() && steps.gate.outputs.run == 'true' }}
+        if: ${{ failure() }}
         run: |
           set +e
           mkdir -p "${RESULTS_DIR}/cluster-logs"
@@ -371,8 +245,8 @@ jobs:
           true
 
       - name: Upload results
-        if: ${{ always() && steps.gate.outputs.run == 'true' }}
-        uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
         with:
           name: whpg${{ matrix.major }}-live-suites-results
           path: ${{ env.RESULTS_DIR }}

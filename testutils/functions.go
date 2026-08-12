@@ -78,7 +78,7 @@ func SetupTestDBConnSegment(dbname string, port int, host string, gpVersion dbco
 		username = currentUser.Username
 	}
 	if host == "" {
-		host := operating.System.Getenv("PGHOST")
+		host = operating.System.Getenv("PGHOST")
 		if host == "" {
 			host, _ = operating.System.Hostname()
 		}
