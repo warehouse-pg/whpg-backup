@@ -14,6 +14,7 @@ import (
 	"github.com/greenplum-db/gpbackup/history"
 	"github.com/greenplum-db/gpbackup/options"
 	"github.com/greenplum-db/gpbackup/utils"
+	"github.com/nightlyone/lockfile"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/warehouse-pg/common-go-libs/cluster"
@@ -52,12 +53,26 @@ func isFullyDeleted(dateDeleted string) bool {
 	}
 }
 
-// checkNotBackupInProgress errors if bc's own gpbackup run has not finished yet, so
-// delete-backup never races a concurrent backup for the files it is still writing.
+// checkNotBackupInProgress errors if bc is still being written by a live gpbackup run.
+//
+// Status alone can't tell: SIGKILL skips the defer/recover that would set Status to
+// Success/Failure, so a crashed run leaves BackupStatusInProgress stuck forever. Probing the
+// lock file (always under /tmp; --no-history runs are never recorded here) disambiguates —
+// TryLock cleans up and succeeds when the owning pid is dead, which is the crash case this
+// should let through.
 func checkNotBackupInProgress(bc *history.BackupConfig) error {
-	if bc.Status == history.BackupStatusInProgress {
+	if bc.Status != history.BackupStatusInProgress {
+		return nil
+	}
+
+	lock, err := lockfile.New(fmt.Sprintf("/tmp/%s.lck", bc.Timestamp))
+	if err != nil {
+		return errors.Errorf("Backup %s is marked in progress and its lock file could not be checked: %s", bc.Timestamp, err.Error())
+	}
+	if err := lock.TryLock(); err != nil {
 		return errors.Errorf("Backup %s is still in progress; wait for it to complete before deleting", bc.Timestamp)
 	}
+	_ = lock.Unlock()
 	return nil
 }
 
