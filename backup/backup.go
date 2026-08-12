@@ -510,7 +510,8 @@ func DoCleanup(backupFailed bool) {
 	// failure; in either case, update the end time to the actual value. Between our signal handler and recovering
 	// panics, there should be no way for gpbackup to exit that leaves the entry in the initial status.
 
-	if !MustGetFlagBool(options.NO_HISTORY) && backupReport != nil {
+	// cmdFlags may point at a different subcommand's flag set; NO_HISTORY isn't always registered.
+	if cmdFlags.Lookup(options.NO_HISTORY) != nil && !MustGetFlagBool(options.NO_HISTORY) && backupReport != nil {
 		var statusString string
 		if backupFailed {
 			statusString = history.BackupStatusFailed

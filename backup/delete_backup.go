@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -58,6 +60,26 @@ func formatHistoryTimestamp(ts string) string {
 	return t.Format("Mon Jan 2 2006 15:04:05")
 }
 
+// shellQuote wraps s in single quotes so it round-trips through a shell (bash -c locally, ssh
+// remotely) as one argument regardless of spaces or other special characters.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// backupSegPrefix discovers bc's on-disk segment-directory prefix (e.g. "gpseg") from the
+// existing directory layout, since delete-backup has no live connection to call
+// filepath.GetSegPrefix. Only relevant when --backup-dir was used without --single-backup-dir.
+func backupSegPrefix(bc *history.BackupConfig) (string, error) {
+	if bc.BackupDir == "" || bc.SingleBackupDir {
+		return "", nil
+	}
+	segPrefix, _, err := filepath.ParseSegPrefix(bc.BackupDir, bc.Timestamp)
+	if err != nil {
+		return "", err
+	}
+	return segPrefix, nil
+}
+
 // Must run before flag parsing.
 func DoDeleteBackupInit(cmd *cobra.Command) {
 	RegisterDeleteBackupFlags(cmd.Flags())
@@ -93,15 +115,11 @@ func DoDeleteBackup(timestamp string) {
 	}
 
 	cascade := MustGetFlagBool(options.CASCADE)
-	deletionOrder, err := resolveDeletionOrder(historyDB, timestamp, cascade)
+	backupsToDelete, err := resolveDeletionOrder(historyDB, target, cascade)
 	gplog.FatalOnError(err)
 
-	backupsToDelete := make([]*history.BackupConfig, 0, len(deletionOrder))
-	for _, ts := range deletionOrder {
-		bc, err := history.GetBackupConfig(ts, historyDB)
-		gplog.FatalOnError(err)
-		backupsToDelete = append(backupsToDelete, bc)
-	}
+	pluginConfigPath := MustGetFlagString(options.PLUGIN_CONFIG)
+	gplog.FatalOnError(validatePluginConfigMatch(backupsToDelete, pluginConfigPath))
 
 	if !MustGetFlagBool(options.NO_PROMPT) && !promptForDeletion(backupsToDelete) {
 		gplog.Info("Backup deletion cancelled")
@@ -109,9 +127,12 @@ func DoDeleteBackup(timestamp string) {
 	}
 
 	var pluginConfig *utils.PluginConfig
-	if pluginConfigPath := MustGetFlagString(options.PLUGIN_CONFIG); pluginConfigPath != "" {
+	if pluginConfigPath != "" {
 		pluginConfig, err = utils.ReadPluginConfig(pluginConfigPath)
 		gplog.FatalOnError(err)
+		// DeleteBackup execs the plugin locally only, so skip ReadPluginConfig's /tmp copy (never
+		// populated here) and use the given path directly.
+		pluginConfig.ConfigPath = pluginConfigPath
 	}
 
 	// Only local (non-plugin) backups need cluster topology to find files to remove.
@@ -124,17 +145,28 @@ func DoDeleteBackup(timestamp string) {
 		segCluster = cluster.NewCluster(segConfigs)
 	}
 
+	// Re-resolve right before mutating anything, in case a concurrent `gpbackup --incremental`
+	// chained onto timestamp while we were preparing.
+	recheck, err := resolveDeletionOrder(historyDB, target, cascade)
+	gplog.FatalOnError(err)
+	if added := newlyAddedDependents(backupsToDelete, recheck); len(added) > 0 {
+		gplog.Fatal(errors.Errorf(
+			"Backup %s gained new dependent(s) (%s) while delete-backup was preparing; re-run delete-backup to pick them up",
+			timestamp, strings.Join(added, ", ")), "")
+	}
+
 	for _, bc := range backupsToDelete {
-		deleteOneBackup(historyDB, bc, pluginConfig, segCluster)
+		deleteOneBackup(historyDB, bc, pluginConfig, segCluster, coordinatorDataDir)
 	}
 	gplog.Info("Successfully deleted %d backup(s)", len(backupsToDelete))
 }
 
-// Returns dependents (transitive, not-yet-deleted) before timestamp itself, or an error if
-// dependents exist and cascade is false.
-func resolveDeletionOrder(historyDB *sql.DB, timestamp string, cascade bool) ([]string, error) {
+// Returns dependents (transitive, not-yet-deleted) sorted newest-first, followed by target
+// itself last, or an error if dependents exist and cascade is false.
+func resolveDeletionOrder(historyDB *sql.DB, target *history.BackupConfig, cascade bool) ([]*history.BackupConfig, error) {
+	timestamp := target.Timestamp
 	visited := map[string]bool{timestamp: true}
-	dependents := make([]string, 0)
+	dependents := make([]*history.BackupConfig, 0)
 	queue := []string{timestamp}
 
 	for len(queue) > 0 {
@@ -158,18 +190,62 @@ func resolveDeletionOrder(historyDB *sql.DB, timestamp string, cascade bool) ([]
 				continue
 			}
 			visited[dep] = true
-			dependents = append(dependents, dep)
+			dependents = append(dependents, bc)
 			queue = append(queue, dep)
 		}
 	}
 
 	if len(dependents) > 0 && !cascade {
+		names := make([]string, len(dependents))
+		for i, bc := range dependents {
+			names[i] = bc.Timestamp
+		}
 		return nil, errors.Errorf(
 			"Backup %s is a dependency of the following backup(s): %s. Use --cascade to delete them as well.",
-			timestamp, strings.Join(dependents, ", "))
+			timestamp, strings.Join(names, ", "))
 	}
 
-	return append(dependents, timestamp), nil
+	sort.Slice(dependents, func(i, j int) bool {
+		return dependents[i].Timestamp > dependents[j].Timestamp
+	})
+
+	return append(dependents, target), nil
+}
+
+// validatePluginConfigMatch errors if any backup's Plugin field disagrees with whether
+// --plugin-config was given for this invocation.
+func validatePluginConfigMatch(backups []*history.BackupConfig, pluginConfigPath string) error {
+	requestedPlugin := pluginConfigPath != ""
+	for _, bc := range backups {
+		usedPlugin := bc.Plugin != ""
+		if usedPlugin == requestedPlugin {
+			continue
+		}
+		if usedPlugin {
+			return errors.Errorf(
+				"Backup %s was created with plugin %s; pass --plugin-config to delete its data",
+				bc.Timestamp, bc.Plugin)
+		}
+		return errors.Errorf(
+			"Backup %s was not created with a plugin; drop --plugin-config to delete it",
+			bc.Timestamp)
+	}
+	return nil
+}
+
+// newlyAddedDependents returns timestamps present in recheck but absent from original.
+func newlyAddedDependents(original, recheck []*history.BackupConfig) []string {
+	expected := make(map[string]bool, len(original))
+	for _, bc := range original {
+		expected[bc.Timestamp] = true
+	}
+	added := make([]string, 0)
+	for _, bc := range recheck {
+		if !expected[bc.Timestamp] {
+			added = append(added, bc.Timestamp)
+		}
+	}
+	return added
 }
 
 func promptForDeletion(backups []*history.BackupConfig) bool {
@@ -185,13 +261,18 @@ func promptForDeletion(backups []*history.BackupConfig) bool {
 	return response == "y" || response == "yes"
 }
 
-func deleteOneBackup(historyDB *sql.DB, bc *history.BackupConfig, pluginConfig *utils.PluginConfig, segCluster *cluster.Cluster) {
+func deleteOneBackup(historyDB *sql.DB, bc *history.BackupConfig, pluginConfig *utils.PluginConfig, segCluster *cluster.Cluster, coordinatorDataDir string) {
 	gplog.Info("Deleting backup %s", bc.Timestamp)
 	gplog.FatalOnError(history.SetDateDeleted(historyDB, bc.Timestamp, deleteStatusInProgress))
 
 	if pluginConfig != nil {
 		if err := pluginConfig.DeleteBackup(bc.Timestamp); err != nil {
 			_ = history.SetDateDeleted(historyDB, bc.Timestamp, deleteStatusPluginFailed)
+			gplog.FatalOnError(err)
+		}
+		// DeleteBackup only cleans the plugin's remote storage; local metadata/report files remain.
+		if err := deleteLocalCoordinatorFiles(coordinatorDataDir, bc); err != nil {
+			_ = history.SetDateDeleted(historyDB, bc.Timestamp, deleteStatusLocalFailed)
 			gplog.FatalOnError(err)
 		}
 	} else {
@@ -206,31 +287,44 @@ func deleteOneBackup(historyDB *sql.DB, bc *history.BackupConfig, pluginConfig *
 }
 
 // deleteLocalBackupFiles removes the on-disk backup directory for bc on every primary and
-// mirror host in the cluster.
+// mirror host in the cluster (including the coordinator itself, content -1).
 //
 // This deliberately does not use cluster.GenerateAndExecuteCommand with a func(contentID int)
 // string generator: that generator type addresses each content's primary host only, so a
 // mirror's directory would get "rm -rf"'d over SSH to the wrong host. Instead this builds one
 // ShellCommand per actual segment row (both "p" and "m") targeting that row's own host.
 func deleteLocalBackupFiles(segCluster *cluster.Cluster, bc *history.BackupConfig) error {
-	// UserSpecifiedSegPrefix is left empty: it only supports restoring the legacy backup file
-	// format, and new backups never set it (see filepath.NewFilePathInfo).
-	primaryFPInfo := filepath.NewFilePathInfo(segCluster, bc.BackupDir, bc.Timestamp, "", bc.SingleBackupDir)
-	mirrorFPInfo := filepath.NewFilePathInfo(segCluster, bc.BackupDir, bc.Timestamp, "", bc.SingleBackupDir, true)
+	segPrefix, err := backupSegPrefix(bc)
+	if err != nil {
+		return err
+	}
+
+	primaryFPInfo := filepath.NewFilePathInfo(segCluster, bc.BackupDir, bc.Timestamp, segPrefix, bc.SingleBackupDir)
+	mirrorFPInfo := filepath.NewFilePathInfo(segCluster, bc.BackupDir, bc.Timestamp, segPrefix, bc.SingleBackupDir, true)
 	localHost := segCluster.GetHostForContent(-1, "p")
 
 	commands := make([]cluster.ShellCommand, 0, len(segCluster.Segments))
+	seenDirs := make(map[string]bool)
 	for _, seg := range segCluster.Segments {
 		fpInfo := primaryFPInfo
 		if seg.Role == "m" {
 			fpInfo = mirrorFPInfo
 		}
 		dir := fpInfo.GetDirForContent(seg.ContentID)
-		if dir == "" {
-			// No mirror configured for this content.
+		if !path.IsAbs(dir) {
+			return errors.Errorf(
+				"Cannot determine the on-disk backup location for content %d on %s (got %q); refusing to delete a relative path",
+				seg.ContentID, seg.Hostname, dir)
+		}
+
+		// SingleBackupDir maps every content on a host to the same dir; dedupe to avoid a race.
+		key := seg.Hostname + "|" + dir
+		if seenDirs[key] {
 			continue
 		}
-		rmCommand := fmt.Sprintf("rm -rf %s", dir)
+		seenDirs[key] = true
+
+		rmCommand := fmt.Sprintf("rm -rf %s", shellQuote(dir))
 		useLocal := seg.Hostname == localHost
 		commands = append(commands, cluster.NewShellCommand(cluster.ON_SEGMENTS, seg.ContentID, "",
 			cluster.ConstructSSHCommand(useLocal, seg.Hostname, rmCommand)))
@@ -239,6 +333,34 @@ func deleteLocalBackupFiles(segCluster *cluster.Cluster, bc *history.BackupConfi
 	remoteOutput := segCluster.ExecuteClusterCommand(cluster.ON_SEGMENTS, commands)
 	if remoteOutput.NumErrors > 0 {
 		return errors.Errorf("Failed to delete backup files for %s on %d host(s)", bc.Timestamp, remoteOutput.NumErrors)
+	}
+	return nil
+}
+
+// deleteLocalCoordinatorFiles removes the coordinator's own local backup directory for bc.
+// Runs directly on this host (no ssh) since delete-backup always executes on the coordinator.
+func deleteLocalCoordinatorFiles(coordinatorDataDir string, bc *history.BackupConfig) error {
+	segPrefix, err := backupSegPrefix(bc)
+	if err != nil {
+		return err
+	}
+
+	fpInfo := filepath.FilePathInfo{
+		SegDirMap:              map[int]string{-1: coordinatorDataDir},
+		Timestamp:              bc.Timestamp,
+		UserSpecifiedBackupDir: bc.BackupDir,
+		UserSpecifiedSegPrefix: segPrefix,
+		SingleBackupDir:        bc.SingleBackupDir,
+	}
+	dir := fpInfo.GetDirForContent(-1)
+	if !path.IsAbs(dir) {
+		return errors.Errorf(
+			"Cannot determine the coordinator's on-disk backup location for %s (got %q); refusing to delete a relative path",
+			bc.Timestamp, dir)
+	}
+
+	if err := operating.System.RemoveAll(dir); err != nil {
+		return errors.Errorf("Failed to delete local coordinator files for %s: %s", bc.Timestamp, err.Error())
 	}
 	return nil
 }

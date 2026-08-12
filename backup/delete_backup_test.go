@@ -56,9 +56,10 @@ var _ = Describe("delete-backup internal tests", func() {
 			defer db.Close()
 			Expect(history.StoreBackupHistory(db, &fullConfig)).To(Succeed())
 
-			order, err := resolveDeletionOrder(db, fullConfig.Timestamp, false)
+			order, err := resolveDeletionOrder(db, &fullConfig, false)
 			Expect(err).To(BeNil())
-			Expect(order).To(Equal([]string{fullConfig.Timestamp}))
+			Expect(order).To(HaveLen(1))
+			Expect(order[0].Timestamp).To(Equal(fullConfig.Timestamp))
 		})
 
 		It("blocks deletion when a live dependent exists and cascade is false", func() {
@@ -67,7 +68,7 @@ var _ = Describe("delete-backup internal tests", func() {
 			Expect(history.StoreBackupHistory(db, &fullConfig)).To(Succeed())
 			Expect(history.StoreBackupHistory(db, &incrementalConfig)).To(Succeed())
 
-			_, err := resolveDeletionOrder(db, fullConfig.Timestamp, false)
+			_, err := resolveDeletionOrder(db, &fullConfig, false)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(incrementalConfig.Timestamp))
 			Expect(err.Error()).To(ContainSubstring("--cascade"))
@@ -79,11 +80,11 @@ var _ = Describe("delete-backup internal tests", func() {
 			Expect(history.StoreBackupHistory(db, &fullConfig)).To(Succeed())
 			Expect(history.StoreBackupHistory(db, &incrementalConfig)).To(Succeed())
 
-			order, err := resolveDeletionOrder(db, fullConfig.Timestamp, true)
+			order, err := resolveDeletionOrder(db, &fullConfig, true)
 			Expect(err).To(BeNil())
 			Expect(order).To(HaveLen(2))
-			Expect(order).To(ContainElement(incrementalConfig.Timestamp))
-			Expect(order[len(order)-1]).To(Equal(fullConfig.Timestamp))
+			Expect(order[0].Timestamp).To(Equal(incrementalConfig.Timestamp))
+			Expect(order[len(order)-1].Timestamp).To(Equal(fullConfig.Timestamp))
 		})
 
 		It("does not block on a dependent that has already been deleted", func() {
@@ -93,9 +94,39 @@ var _ = Describe("delete-backup internal tests", func() {
 			Expect(history.StoreBackupHistory(db, &incrementalConfig)).To(Succeed())
 			Expect(history.SetDateDeleted(db, incrementalConfig.Timestamp, "20260102000000")).To(Succeed())
 
-			order, err := resolveDeletionOrder(db, fullConfig.Timestamp, false)
+			order, err := resolveDeletionOrder(db, &fullConfig, false)
 			Expect(err).To(BeNil())
-			Expect(order).To(Equal([]string{fullConfig.Timestamp}))
+			Expect(order).To(HaveLen(1))
+			Expect(order[0].Timestamp).To(Equal(fullConfig.Timestamp))
+		})
+
+		It("orders a three-deep incremental chain newest-first, target last", func() {
+			db, _ := history.InitializeHistoryDatabase(historyDBPath)
+			defer db.Close()
+			incr2Config := history.BackupConfig{
+				DatabaseName:     "testdb",
+				ExcludeRelations: []string{},
+				ExcludeSchemas:   []string{},
+				IncludeRelations: []string{},
+				IncludeSchemas:   []string{},
+				Incremental:      true,
+				RestorePlan: []history.RestorePlanEntry{
+					{Timestamp: "20260101000000", TableFQNs: []string{"public.foo"}},
+					{Timestamp: "20260101010000", TableFQNs: []string{"public.foo"}},
+					{Timestamp: "20260101020000", TableFQNs: []string{"public.foo"}},
+				},
+				Timestamp: "20260101020000",
+			}
+			Expect(history.StoreBackupHistory(db, &fullConfig)).To(Succeed())
+			Expect(history.StoreBackupHistory(db, &incrementalConfig)).To(Succeed())
+			Expect(history.StoreBackupHistory(db, &incr2Config)).To(Succeed())
+
+			order, err := resolveDeletionOrder(db, &fullConfig, true)
+			Expect(err).To(BeNil())
+			Expect(order).To(HaveLen(3))
+			Expect(order[0].Timestamp).To(Equal(incr2Config.Timestamp))
+			Expect(order[1].Timestamp).To(Equal(incrementalConfig.Timestamp))
+			Expect(order[2].Timestamp).To(Equal(fullConfig.Timestamp))
 		})
 	})
 
@@ -169,11 +200,11 @@ var _ = Describe("delete-backup internal tests", func() {
 			joined := strings.Join(allCommandStrings, "\n")
 
 			// Coordinator segment runs locally (no ssh, no hostname in the command).
-			Expect(joined).To(ContainSubstring("bash -c rm -rf /data/master/backups/20260101/20260101000000"))
+			Expect(joined).To(ContainSubstring("bash -c rm -rf '/data/master/backups/20260101/20260101000000'"))
 			// Every other segment/mirror runs over ssh to its own host.
-			Expect(joined).To(MatchRegexp(`ssh .*seghost1.* rm -rf /data/seg0/backups/20260101/20260101000000`))
-			Expect(joined).To(MatchRegexp(`ssh .*mirrorhost1.* rm -rf /data/mirror0/backups/20260101/20260101000000`))
-			Expect(joined).To(MatchRegexp(`ssh .*seghost2.* rm -rf /data/seg1/backups/20260101/20260101000000`))
+			Expect(joined).To(MatchRegexp(`ssh .*seghost1.* rm -rf '/data/seg0/backups/20260101/20260101000000'`))
+			Expect(joined).To(MatchRegexp(`ssh .*mirrorhost1.* rm -rf '/data/mirror0/backups/20260101/20260101000000'`))
+			Expect(joined).To(MatchRegexp(`ssh .*seghost2.* rm -rf '/data/seg1/backups/20260101/20260101000000'`))
 		})
 
 		It("returns an error when any host fails to delete its files", func() {
@@ -182,6 +213,40 @@ var _ = Describe("delete-backup internal tests", func() {
 			err := deleteLocalBackupFiles(testCluster, bc)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(bc.Timestamp))
+		})
+
+		It("issues only one rm -rf per (host, dir) when SingleBackupDir maps every content on a host to the same path", func() {
+			multiSegHostCluster := cluster.NewCluster([]cluster.SegConfig{
+				{DbID: 1, ContentID: -1, Role: "p", DataDir: "/data/master", Hostname: "coordinator"},
+				{DbID: 2, ContentID: 0, Role: "p", DataDir: "/data/seg0", Hostname: "seghost1"},
+				{DbID: 3, ContentID: 1, Role: "p", DataDir: "/data/seg1", Hostname: "seghost1"},
+			})
+			multiSegExecutor := testhelper.TestExecutor{ClusterOutput: &cluster.RemoteOutput{}}
+			multiSegHostCluster.Executor = &multiSegExecutor
+			bc.BackupDir = "/shared/backups"
+			bc.SingleBackupDir = true
+
+			err := deleteLocalBackupFiles(multiSegHostCluster, bc)
+			Expect(err).To(BeNil())
+
+			// Both segments on seghost1 resolve to the identical shared directory; only one
+			// rm -rf should be issued for that (host, dir) pair, plus one for the coordinator.
+			Expect(multiSegExecutor.ClusterCommands[0]).To(HaveLen(2))
+		})
+
+		It("returns an error instead of deleting a relative path when a segment's data dir is unknown", func() {
+			unknownDirCluster := cluster.NewCluster([]cluster.SegConfig{
+				{DbID: 1, ContentID: -1, Role: "p", DataDir: "/data/master", Hostname: "coordinator"},
+				{DbID: 2, ContentID: 0, Role: "p", DataDir: "", Hostname: "seghost1"},
+			})
+			unknownExecutor := testhelper.TestExecutor{ClusterOutput: &cluster.RemoteOutput{}}
+			unknownDirCluster.Executor = &unknownExecutor
+
+			err := deleteLocalBackupFiles(unknownDirCluster, bc)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("relative path"))
+			// Must abort before running anything, not just skip the bad segment.
+			Expect(unknownExecutor.ClusterCommands).To(HaveLen(0))
 		})
 	})
 
@@ -217,7 +282,7 @@ var _ = Describe("delete-backup internal tests", func() {
 			return scriptPath
 		}
 
-		It("marks the backup deleted with a completed timestamp on plugin success", func() {
+		It("marks the backup deleted with a completed timestamp on plugin success, and also removes local coordinator files", func() {
 			db, _ := history.InitializeHistoryDatabase(historyDBPath)
 			defer db.Close()
 			Expect(history.StoreBackupHistory(db, bc)).To(Succeed())
@@ -226,13 +291,21 @@ var _ = Describe("delete-backup internal tests", func() {
 			Expect(err).To(BeNil())
 			defer os.RemoveAll(tempDir)
 
+			// Simulate the coordinator-local metadata/report files backup.go always writes,
+			// even for a plugin backup, which pluginConfig.DeleteBackup alone would never clean up.
+			localBackupDir := filepath.Join(tempDir, "backups", bc.Timestamp[0:8], bc.Timestamp)
+			Expect(os.MkdirAll(localBackupDir, 0755)).To(Succeed())
+			Expect(ioutil.WriteFile(filepath.Join(localBackupDir, "metadata.sql"), []byte("-- fake"), 0644)).To(Succeed())
+
 			pluginConfig := &utils.PluginConfig{ExecutablePath: writePluginScript(tempDir, 0), ConfigPath: "/tmp/my_plugin_config.yaml"}
 
-			deleteOneBackup(db, bc, pluginConfig, nil)
+			deleteOneBackup(db, bc, pluginConfig, nil, tempDir)
 
 			updated, err := history.GetBackupConfig(bc.Timestamp, db)
 			Expect(err).To(BeNil())
 			Expect(isFullyDeleted(updated.DateDeleted)).To(BeTrue())
+			_, statErr := os.Stat(localBackupDir)
+			Expect(os.IsNotExist(statErr)).To(BeTrue())
 		})
 
 		It("marks the backup as plugin-delete-failed and panics on plugin failure", func() {
@@ -248,7 +321,7 @@ var _ = Describe("delete-backup internal tests", func() {
 
 			func() {
 				defer testhelper.ShouldPanicWithMessage("boom")
-				deleteOneBackup(db, bc, pluginConfig, nil)
+				deleteOneBackup(db, bc, pluginConfig, nil, tempDir)
 			}()
 
 			updated, err := history.GetBackupConfig(bc.Timestamp, db)
@@ -269,12 +342,54 @@ var _ = Describe("delete-backup internal tests", func() {
 
 			func() {
 				defer testhelper.ShouldPanicWithMessage(bc.Timestamp)
-				deleteOneBackup(db, bc, nil, testCluster)
+				deleteOneBackup(db, bc, nil, testCluster, "")
 			}()
 
 			updated, err := history.GetBackupConfig(bc.Timestamp, db)
 			Expect(err).To(BeNil())
 			Expect(updated.DateDeleted).To(Equal(deleteStatusLocalFailed))
+		})
+	})
+
+	Describe("validatePluginConfigMatch", func() {
+		It("passes when a plugin backup is deleted with --plugin-config", func() {
+			backups := []*history.BackupConfig{{Timestamp: "20260101000000", Plugin: "gpbackup_s3_plugin"}}
+			Expect(validatePluginConfigMatch(backups, "/etc/s3_config.yaml")).To(BeNil())
+		})
+
+		It("passes when a non-plugin backup is deleted without --plugin-config", func() {
+			backups := []*history.BackupConfig{{Timestamp: "20260101000000"}}
+			Expect(validatePluginConfigMatch(backups, "")).To(BeNil())
+		})
+
+		It("fails when a plugin backup is deleted without --plugin-config", func() {
+			backups := []*history.BackupConfig{{Timestamp: "20260101000000", Plugin: "gpbackup_s3_plugin"}}
+			err := validatePluginConfigMatch(backups, "")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("20260101000000"))
+			Expect(err.Error()).To(ContainSubstring("--plugin-config"))
+		})
+
+		It("fails when a non-plugin backup is deleted with --plugin-config", func() {
+			backups := []*history.BackupConfig{{Timestamp: "20260101000000"}}
+			err := validatePluginConfigMatch(backups, "/etc/s3_config.yaml")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("20260101000000"))
+			Expect(err.Error()).To(ContainSubstring("not created with a plugin"))
+		})
+	})
+
+	Describe("newlyAddedDependents", func() {
+		It("returns nothing when recheck matches the original set", func() {
+			original := []*history.BackupConfig{{Timestamp: "20260101000000"}, {Timestamp: "20260101010000"}}
+			recheck := []*history.BackupConfig{{Timestamp: "20260101010000"}, {Timestamp: "20260101000000"}}
+			Expect(newlyAddedDependents(original, recheck)).To(BeEmpty())
+		})
+
+		It("returns the timestamp of a dependent chained on after the original resolve", func() {
+			original := []*history.BackupConfig{{Timestamp: "20260101000000"}}
+			recheck := []*history.BackupConfig{{Timestamp: "20260101010000"}, {Timestamp: "20260101000000"}}
+			Expect(newlyAddedDependents(original, recheck)).To(Equal([]string{"20260101010000"}))
 		})
 	})
 })
