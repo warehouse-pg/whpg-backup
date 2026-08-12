@@ -119,40 +119,45 @@ func DoDeleteBackup(timestamp string) {
 	coordinatorDataDir, err := getCoordinatorDataDir()
 	gplog.FatalOnError(err)
 
+	historyDB, err := openBackupHistoryDatabase(coordinatorDataDir)
+	gplog.FatalOnError(err)
+	defer historyDB.Close()
+
+	pluginConfigPath := MustGetFlagString(options.PLUGIN_CONFIG)
+	pluginConfig, segCluster := setupDeletionTargets(coordinatorDataDir, pluginConfigPath)
+
+	deleted, err := deleteBackupChain(historyDB, timestamp, deleteChainOptions{
+		cascade:            MustGetFlagBool(options.CASCADE),
+		noPrompt:           MustGetFlagBool(options.NO_PROMPT),
+		pluginConfigPath:   pluginConfigPath,
+		pluginConfig:       pluginConfig,
+		segCluster:         segCluster,
+		coordinatorDataDir: coordinatorDataDir,
+	})
+	gplog.FatalOnError(err)
+	if deleted > 0 {
+		gplog.Info("Successfully deleted %d backup(s)", deleted)
+	}
+}
+
+// openBackupHistoryDatabase locates and opens the coordinator's backup history sqlite db.
+func openBackupHistoryDatabase(coordinatorDataDir string) (*sql.DB, error) {
 	// GetBackupHistoryDatabasePath only reads SegDirMap[-1], so there is no need to query the
 	// cluster for a full FilePathInfo to just locate the history db.
 	fpInfo := filepath.FilePathInfo{SegDirMap: map[int]string{-1: coordinatorDataDir}}
 	historyDBPath := fpInfo.GetBackupHistoryDatabasePath()
 	if _, err := os.Stat(historyDBPath); os.IsNotExist(err) {
-		gplog.Fatal(errors.Errorf("No backup history database found at %s", historyDBPath), "")
+		return nil, errors.Errorf("No backup history database found at %s", historyDBPath)
 	}
+	return history.InitializeHistoryDatabase(historyDBPath)
+}
 
-	historyDB, err := history.InitializeHistoryDatabase(historyDBPath)
-	gplog.FatalOnError(err)
-	defer historyDB.Close()
-
-	target, err := history.GetBackupConfig(timestamp, historyDB)
-	gplog.FatalOnError(err)
-	if isFullyDeleted(target.DateDeleted) {
-		gplog.Info("Backup %s has already been deleted", timestamp)
-		return
-	}
-	gplog.FatalOnError(checkNotBackupInProgress(target))
-
-	cascade := MustGetFlagBool(options.CASCADE)
-	backupsToDelete, err := resolveDeletionOrder(historyDB, target, cascade)
-	gplog.FatalOnError(err)
-
-	pluginConfigPath := MustGetFlagString(options.PLUGIN_CONFIG)
-	gplog.FatalOnError(validatePluginConfigMatch(backupsToDelete, pluginConfigPath))
-
-	if !MustGetFlagBool(options.NO_PROMPT) && !promptForDeletion(backupsToDelete) {
-		gplog.Info("Backup deletion cancelled")
-		return
-	}
-
+// setupDeletionTargets builds the plugin config and/or cluster topology needed to actually
+// remove backup files, shared by every delete-backup(-before) invocation.
+func setupDeletionTargets(coordinatorDataDir string, pluginConfigPath string) (*utils.PluginConfig, *cluster.Cluster) {
 	var pluginConfig *utils.PluginConfig
 	if pluginConfigPath != "" {
+		var err error
 		pluginConfig, err = utils.ReadPluginConfig(pluginConfigPath)
 		gplog.FatalOnError(err)
 		// DeleteBackup execs the plugin locally only, so skip ReadPluginConfig's /tmp copy (never
@@ -169,21 +174,67 @@ func DoDeleteBackup(timestamp string) {
 		gplog.FatalOnError(err)
 		segCluster = cluster.NewCluster(segConfigs)
 	}
+	return pluginConfig, segCluster
+}
+
+type deleteChainOptions struct {
+	cascade            bool
+	noPrompt           bool
+	pluginConfigPath   string
+	pluginConfig       *utils.PluginConfig
+	segCluster         *cluster.Cluster
+	coordinatorDataDir string
+}
+
+// deleteBackupChain resolves and deletes the backup at timestamp, plus (with cascade) everything
+// that depends on it. It is the same pipeline DoDeleteBackup runs for a single CLI invocation,
+// extracted so delete-backups-before can call it once per candidate timestamp; errors are
+// returned rather than fatal so one blocked/failed backup doesn't need to stop the whole loop.
+// Returns the number of backups actually deleted (0 if already deleted or the user declined the
+// prompt).
+func deleteBackupChain(historyDB *sql.DB, timestamp string, opts deleteChainOptions) (int, error) {
+	target, err := history.GetBackupConfig(timestamp, historyDB)
+	if err != nil {
+		return 0, err
+	}
+	if isFullyDeleted(target.DateDeleted) {
+		gplog.Info("Backup %s has already been deleted", timestamp)
+		return 0, nil
+	}
+	if err := checkNotBackupInProgress(target); err != nil {
+		return 0, err
+	}
+
+	backupsToDelete, err := resolveDeletionOrder(historyDB, target, opts.cascade)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := validatePluginConfigMatch(backupsToDelete, opts.pluginConfigPath); err != nil {
+		return 0, err
+	}
+
+	if !opts.noPrompt && !promptForDeletion(backupsToDelete) {
+		gplog.Info("Backup deletion cancelled for %s", timestamp)
+		return 0, nil
+	}
 
 	// Re-resolve right before mutating anything, in case a concurrent `gpbackup --incremental`
 	// chained onto timestamp while we were preparing.
-	recheck, err := resolveDeletionOrder(historyDB, target, cascade)
-	gplog.FatalOnError(err)
+	recheck, err := resolveDeletionOrder(historyDB, target, opts.cascade)
+	if err != nil {
+		return 0, err
+	}
 	if added := newlyAddedDependents(backupsToDelete, recheck); len(added) > 0 {
-		gplog.Fatal(errors.Errorf(
+		return 0, errors.Errorf(
 			"Backup %s gained new dependent(s) (%s) while delete-backup was preparing; re-run delete-backup to pick them up",
-			timestamp, strings.Join(added, ", ")), "")
+			timestamp, strings.Join(added, ", "))
 	}
 
 	for _, bc := range backupsToDelete {
-		deleteOneBackup(historyDB, bc, pluginConfig, segCluster, coordinatorDataDir)
+		deleteOneBackup(historyDB, bc, opts.pluginConfig, opts.segCluster, opts.coordinatorDataDir)
 	}
-	gplog.Info("Successfully deleted %d backup(s)", len(backupsToDelete))
+	return len(backupsToDelete), nil
 }
 
 // Returns dependents (transitive, not-yet-deleted) sorted newest-first, followed by target

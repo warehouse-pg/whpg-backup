@@ -460,6 +460,31 @@ func GetBackupDependents(historyDB *sql.DB, timestamp string) ([]string, error) 
 	return dependents, nil
 }
 
+// GetBackupTimestampsBefore returns every stored backup timestamp strictly older than cutoff,
+// oldest first. Timestamps are fixed-width "20060102150405" strings, so lexicographic order on
+// them coincides with chronological order.
+func GetBackupTimestampsBefore(historyDB *sql.DB, cutoff string) ([]string, error) {
+	rows, err := historyDB.Query("SELECT timestamp FROM backups WHERE timestamp < ? ORDER BY timestamp ASC", cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	timestamps := make([]string, 0)
+	for rows.Next() {
+		var ts string
+		if err := rows.Scan(&ts); err != nil {
+			return nil, err
+		}
+		timestamps = append(timestamps, ts)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return timestamps, nil
+}
+
 func SetDateDeleted(historyDB *sql.DB, timestamp string, dateDeleted string) error {
 	_, err := historyDB.Exec("UPDATE backups SET date_deleted = ? WHERE timestamp = ?", dateDeleted, timestamp)
 	return err

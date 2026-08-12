@@ -35,9 +35,21 @@ func main() {
 		}}
 	rootCmd.AddCommand(deleteBackupCmd)
 
+	var deleteBackupsBeforeCmd = &cobra.Command{
+		Use:   "delete-backups-before <timestamp>",
+		Short: "Delete all backup sets older than a given timestamp",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			defer DoDeleteBackupTeardown()
+			UseCmdFlags(cmd.Flags())
+			DoDeleteBackupsBefore(args[0])
+		}}
+	rootCmd.AddCommand(deleteBackupsBeforeCmd)
+
 	rootCmd.SetArgs(options.HandleSingleDashes(os.Args[1:]))
 	DoInit(rootCmd)
 	DoDeleteBackupInit(deleteBackupCmd)
+	DoDeleteBackupsBeforeInit(deleteBackupsBeforeCmd)
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(2)
 	}

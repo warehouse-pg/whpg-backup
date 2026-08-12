@@ -105,6 +105,18 @@ func SetDeleteBackupFlagDefaults(flagSet *pflag.FlagSet) {
 	flagSet.Bool(VERBOSE, false, "Print verbose log messages")
 }
 
+// SetDeleteBackupsBeforeFlagDefaults is SetDeleteBackupFlagDefaults minus --cascade: cascading
+// past the cutoff would delete backups newer than the given timestamp, so delete-backups-before
+// always skips (with a warning) any candidate blocked by a live dependent instead.
+func SetDeleteBackupsBeforeFlagDefaults(flagSet *pflag.FlagSet) {
+	flagSet.Bool(DEBUG, false, "Print verbose and debug log messages")
+	flagSet.Bool("help", false, "Help for delete-backups-before")
+	flagSet.Bool(NO_PROMPT, false, "Do not prompt for confirmation before deleting")
+	flagSet.String(PLUGIN_CONFIG, "", "The configuration file to use for a plugin")
+	flagSet.Bool(QUIET, false, "Suppress non-warning, non-error log messages")
+	flagSet.Bool(VERBOSE, false, "Print verbose log messages")
+}
+
 func SetRestoreFlagDefaults(flagSet *pflag.FlagSet) {
 	flagSet.String(BACKUP_DIR, "", "The absolute path of the directory in which the backup files to be restored are located")
 	flagSet.Bool(CREATE_DB, false, "Create the database before metadata restore")
