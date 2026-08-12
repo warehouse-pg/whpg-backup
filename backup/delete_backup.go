@@ -52,6 +52,15 @@ func isFullyDeleted(dateDeleted string) bool {
 	}
 }
 
+// checkNotBackupInProgress errors if bc's own gpbackup run has not finished yet, so
+// delete-backup never races a concurrent backup for the files it is still writing.
+func checkNotBackupInProgress(bc *history.BackupConfig) error {
+	if bc.Status == history.BackupStatusInProgress {
+		return errors.Errorf("Backup %s is still in progress; wait for it to complete before deleting", bc.Timestamp)
+	}
+	return nil
+}
+
 func formatHistoryTimestamp(ts string) string {
 	t, err := time.ParseInLocation("20060102150405", ts, operating.System.Local)
 	if err != nil {
@@ -113,6 +122,7 @@ func DoDeleteBackup(timestamp string) {
 		gplog.Info("Backup %s has already been deleted", timestamp)
 		return
 	}
+	gplog.FatalOnError(checkNotBackupInProgress(target))
 
 	cascade := MustGetFlagBool(options.CASCADE)
 	backupsToDelete, err := resolveDeletionOrder(historyDB, target, cascade)
@@ -188,6 +198,9 @@ func resolveDeletionOrder(historyDB *sql.DB, target *history.BackupConfig, casca
 			if isFullyDeleted(bc.DateDeleted) {
 				// Already gone; it no longer needs this backup's files.
 				continue
+			}
+			if err := checkNotBackupInProgress(bc); err != nil {
+				return nil, err
 			}
 			visited[dep] = true
 			dependents = append(dependents, bc)

@@ -100,6 +100,19 @@ var _ = Describe("delete-backup internal tests", func() {
 			Expect(order[0].Timestamp).To(Equal(fullConfig.Timestamp))
 		})
 
+		It("blocks deletion when a dependent backup is still in progress, even with cascade", func() {
+			db, _ := history.InitializeHistoryDatabase(historyDBPath)
+			defer db.Close()
+			incrementalConfig.Status = history.BackupStatusInProgress
+			Expect(history.StoreBackupHistory(db, &fullConfig)).To(Succeed())
+			Expect(history.StoreBackupHistory(db, &incrementalConfig)).To(Succeed())
+
+			_, err := resolveDeletionOrder(db, &fullConfig, true)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(incrementalConfig.Timestamp))
+			Expect(err.Error()).To(ContainSubstring("in progress"))
+		})
+
 		It("orders a three-deep incremental chain newest-first, target last", func() {
 			db, _ := history.InitializeHistoryDatabase(historyDBPath)
 			defer db.Close()
