@@ -86,6 +86,16 @@ func (plugin *PluginConfig) MustBackupFile(filenamePath string) {
 	gplog.FatalOnError(err)
 }
 
+func (plugin *PluginConfig) DeleteBackup(timestamp string) error {
+	command := fmt.Sprintf("%s delete_backup %s %s", plugin.ExecutablePath, plugin.ConfigPath, timestamp)
+	gplog.Debug("%s", command)
+	output, err := exec.Command(plugin.ExecutablePath, "delete_backup", plugin.ConfigPath, timestamp).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ERROR: Plugin failed to delete backup %s. %s", timestamp, string(output))
+	}
+	return nil
+}
+
 func (plugin *PluginConfig) MustRestoreFile(filenamePath string) {
 	directory, _ := path.Split(filenamePath)
 	err := operating.System.MkdirAll(directory, 0755)

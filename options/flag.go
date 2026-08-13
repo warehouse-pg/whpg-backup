@@ -15,6 +15,7 @@ import (
 
 const (
 	BACKUP_DIR            = "backup-dir"
+	CASCADE               = "cascade"
 	COMPRESSION_TYPE      = "compression-type"
 	COMPRESSION_LEVEL     = "compression-level"
 	DATA_ONLY             = "data-only"
@@ -37,6 +38,7 @@ const (
 	METADATA_ONLY         = "metadata-only"
 	NO_COMPRESSION        = "no-compression"
 	NO_HISTORY            = "no-history"
+	NO_PROMPT             = "no-prompt"
 	PLUGIN_CONFIG         = "plugin-config"
 	QUIET                 = "quiet"
 	SINGLE_DATA_FILE      = "single-data-file"
@@ -91,6 +93,16 @@ func SetBackupFlagDefaults(flagSet *pflag.FlagSet) {
 	flagSet.Bool(WITH_STATS, false, "Back up query plan statistics")
 	flagSet.Bool(WITHOUT_GLOBALS, false, "Skip backup of global metadata")
 	flagSet.Bool(NO_INHERITS, false, "For a filtered backup, don't back up all tables that inherit included tables")
+}
+
+func SetDeleteBackupFlagDefaults(flagSet *pflag.FlagSet) {
+	flagSet.Bool(CASCADE, false, "Also delete backups that depend on the given backup")
+	flagSet.Bool(DEBUG, false, "Print verbose and debug log messages")
+	flagSet.Bool("help", false, "Help for delete-backup")
+	flagSet.Bool(NO_PROMPT, false, "Do not prompt for confirmation before deleting")
+	flagSet.String(PLUGIN_CONFIG, "", "The configuration file to use for a plugin")
+	flagSet.Bool(QUIET, false, "Suppress non-warning, non-error log messages")
+	flagSet.Bool(VERBOSE, false, "Print verbose log messages")
 }
 
 func SetRestoreFlagDefaults(flagSet *pflag.FlagSet) {

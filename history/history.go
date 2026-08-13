@@ -434,6 +434,37 @@ func GetMainBackupInfo(timestamp string, historyDB *sql.DB) (BackupConfig, error
 	return backupConfig, err
 }
 
+// Does not check whether dependents have themselves already been deleted; callers needing that
+// should check BackupConfig.DateDeleted for each returned timestamp.
+func GetBackupDependents(historyDB *sql.DB, timestamp string) ([]string, error) {
+	rows, err := historyDB.Query(
+		"SELECT DISTINCT timestamp FROM restore_plans WHERE restore_plan_timestamp = ? AND timestamp != ?",
+		timestamp, timestamp)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	dependents := make([]string, 0)
+	for rows.Next() {
+		var dependent string
+		if err := rows.Scan(&dependent); err != nil {
+			return nil, err
+		}
+		dependents = append(dependents, dependent)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return dependents, nil
+}
+
+func SetDateDeleted(historyDB *sql.DB, timestamp string, dateDeleted string) error {
+	_, err := historyDB.Exec("UPDATE backups SET date_deleted = ? WHERE timestamp = ?", dateDeleted, timestamp)
+	return err
+}
+
 func getAuxTableName(t_id AuxTableID) (string, error) {
 	switch t_id {
 	case ExcludeSchemas, ExcludeRelations, IncludeSchemas, IncludeRelations:

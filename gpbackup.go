@@ -23,8 +23,21 @@ func main() {
 			DoSetup()
 			DoBackup()
 		}}
+
+	var deleteBackupCmd = &cobra.Command{
+		Use:   "delete-backup <timestamp>",
+		Short: "Delete a backup set",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			defer DoDeleteBackupTeardown()
+			UseCmdFlags(cmd.Flags())
+			DoDeleteBackup(args[0])
+		}}
+	rootCmd.AddCommand(deleteBackupCmd)
+
 	rootCmd.SetArgs(options.HandleSingleDashes(os.Args[1:]))
 	DoInit(rootCmd)
+	DoDeleteBackupInit(deleteBackupCmd)
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(2)
 	}

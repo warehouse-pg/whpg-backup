@@ -74,6 +74,20 @@ func SetCmdFlags(flagSet *pflag.FlagSet) {
 	options.SetBackupFlagDefaults(cmdFlags)
 }
 
+// RegisterDeleteBackupFlags defines the delete-backup flag set without touching the shared
+// cmdFlags pointer, since that must keep pointing at whichever subcommand cobra actually
+// invokes; see UseCmdFlags.
+func RegisterDeleteBackupFlags(flagSet *pflag.FlagSet) {
+	options.SetDeleteBackupFlagDefaults(flagSet)
+}
+
+// UseCmdFlags points MustGetFlag* reads at the given (already-registered, already-parsed)
+// flag set. Call this at the start of a subcommand's Run, after cobra has selected which
+// subcommand's flags actually hold the parsed values.
+func UseCmdFlags(flagSet *pflag.FlagSet) {
+	cmdFlags = flagSet
+}
+
 func SetConnection(conn *dbconn.DBConn) {
 	connectionPool = conn
 }
