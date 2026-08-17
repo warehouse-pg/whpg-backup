@@ -1,6 +1,9 @@
 package backup
 
 import (
+	"bufio"
+	"os"
+
 	"github.com/greenplum-db/gpbackup/filepath"
 	"github.com/greenplum-db/gpbackup/history"
 	"github.com/greenplum-db/gpbackup/options"
@@ -49,6 +52,7 @@ func DoDeleteBackupsBefore(cutoff string) {
 		pluginConfig:       pluginConfig,
 		segCluster:         segCluster,
 		coordinatorDataDir: coordinatorDataDir,
+		stdinReader:        bufio.NewReader(os.Stdin),
 	}
 
 	totalDeleted := 0

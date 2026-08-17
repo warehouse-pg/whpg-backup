@@ -128,11 +128,13 @@ func DoDeleteBackup(timestamp string) {
 
 	deleted, err := deleteBackupChain(historyDB, timestamp, deleteChainOptions{
 		cascade:            MustGetFlagBool(options.CASCADE),
+		cascadeSupported:   true,
 		noPrompt:           MustGetFlagBool(options.NO_PROMPT),
 		pluginConfigPath:   pluginConfigPath,
 		pluginConfig:       pluginConfig,
 		segCluster:         segCluster,
 		coordinatorDataDir: coordinatorDataDir,
+		stdinReader:        bufio.NewReader(os.Stdin),
 	})
 	gplog.FatalOnError(err)
 	if deleted > 0 {
@@ -178,12 +180,19 @@ func setupDeletionTargets(coordinatorDataDir string, pluginConfigPath string) (*
 }
 
 type deleteChainOptions struct {
-	cascade            bool
+	cascade bool
+	// cascadeSupported controls whether a blocked-by-dependents error suggests --cascade;
+	// delete-backups-before has no such flag, so it leaves this false.
+	cascadeSupported   bool
 	noPrompt           bool
 	pluginConfigPath   string
 	pluginConfig       *utils.PluginConfig
 	segCluster         *cluster.Cluster
 	coordinatorDataDir string
+	// stdinReader is shared across every backup in a delete-backups-before run so a piped
+	// multi-line answer (e.g. "y\ny\ny\n") isn't lost inside a bufio.Reader that gets discarded
+	// after one prompt.
+	stdinReader *bufio.Reader
 }
 
 // deleteBackupChain resolves and deletes the backup at timestamp, plus (with cascade) everything
@@ -205,7 +214,7 @@ func deleteBackupChain(historyDB *sql.DB, timestamp string, opts deleteChainOpti
 		return 0, err
 	}
 
-	backupsToDelete, err := resolveDeletionOrder(historyDB, target, opts.cascade)
+	backupsToDelete, err := resolveDeletionOrder(historyDB, target, opts.cascade, opts.cascadeSupported)
 	if err != nil {
 		return 0, err
 	}
@@ -214,14 +223,14 @@ func deleteBackupChain(historyDB *sql.DB, timestamp string, opts deleteChainOpti
 		return 0, err
 	}
 
-	if !opts.noPrompt && !promptForDeletion(backupsToDelete) {
+	if !opts.noPrompt && !promptForDeletion(opts.stdinReader, backupsToDelete) {
 		gplog.Info("Backup deletion cancelled for %s", timestamp)
 		return 0, nil
 	}
 
 	// Re-resolve right before mutating anything, in case a concurrent `gpbackup --incremental`
 	// chained onto timestamp while we were preparing.
-	recheck, err := resolveDeletionOrder(historyDB, target, opts.cascade)
+	recheck, err := resolveDeletionOrder(historyDB, target, opts.cascade, opts.cascadeSupported)
 	if err != nil {
 		return 0, err
 	}
@@ -238,8 +247,11 @@ func deleteBackupChain(historyDB *sql.DB, timestamp string, opts deleteChainOpti
 }
 
 // Returns dependents (transitive, not-yet-deleted) sorted newest-first, followed by target
-// itself last, or an error if dependents exist and cascade is false.
-func resolveDeletionOrder(historyDB *sql.DB, target *history.BackupConfig, cascade bool) ([]*history.BackupConfig, error) {
+// itself last, or an error if dependents exist and cascade is false. cascadeSupported controls
+// only the wording of that error: callers without a --cascade flag of their own (e.g.
+// delete-backups-before) get told the backup will be picked up once its dependents age out,
+// instead of being pointed at a flag they don't have.
+func resolveDeletionOrder(historyDB *sql.DB, target *history.BackupConfig, cascade bool, cascadeSupported bool) ([]*history.BackupConfig, error) {
 	timestamp := target.Timestamp
 	visited := map[string]bool{timestamp: true}
 	dependents := make([]*history.BackupConfig, 0)
@@ -278,6 +290,11 @@ func resolveDeletionOrder(historyDB *sql.DB, target *history.BackupConfig, casca
 		names := make([]string, len(dependents))
 		for i, bc := range dependents {
 			names[i] = bc.Timestamp
+		}
+		if !cascadeSupported {
+			return nil, errors.Errorf(
+				"Backup %s is a dependency of the following backup(s): %s; skipping until they age past the cutoff",
+				timestamp, strings.Join(names, ", "))
 		}
 		return nil, errors.Errorf(
 			"Backup %s is a dependency of the following backup(s): %s. Use --cascade to delete them as well.",
@@ -327,14 +344,17 @@ func newlyAddedDependents(original, recheck []*history.BackupConfig) []string {
 	return added
 }
 
-func promptForDeletion(backups []*history.BackupConfig) bool {
+// promptForDeletion asks the user to confirm deleting backups. reader must be shared across
+// every prompt in a run (rather than a fresh bufio.NewReader(os.Stdin) per call): bufio
+// over-reads and buffers internally, so a piped multi-line answer like "y\ny\ny\n" would have its
+// unread lines discarded along with the reader after the first prompt.
+func promptForDeletion(reader *bufio.Reader, backups []*history.BackupConfig) bool {
 	fmt.Println("The following backup(s) will be deleted:")
 	for _, b := range backups {
 		fmt.Printf("  %s (database: %s, date: %s)\n", b.Timestamp, b.DatabaseName, formatHistoryTimestamp(b.Timestamp))
 	}
 	fmt.Print("Continue? [y/N]: ")
 
-	reader := bufio.NewReader(os.Stdin)
 	response, _ := reader.ReadString('\n')
 	response = strings.ToLower(strings.TrimSpace(response))
 	return response == "y" || response == "yes"

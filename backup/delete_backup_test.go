@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bufio"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -57,7 +58,7 @@ var _ = Describe("delete-backup internal tests", func() {
 			defer db.Close()
 			Expect(history.StoreBackupHistory(db, &fullConfig)).To(Succeed())
 
-			order, err := resolveDeletionOrder(db, &fullConfig, false)
+			order, err := resolveDeletionOrder(db, &fullConfig, false, true)
 			Expect(err).To(BeNil())
 			Expect(order).To(HaveLen(1))
 			Expect(order[0].Timestamp).To(Equal(fullConfig.Timestamp))
@@ -69,10 +70,22 @@ var _ = Describe("delete-backup internal tests", func() {
 			Expect(history.StoreBackupHistory(db, &fullConfig)).To(Succeed())
 			Expect(history.StoreBackupHistory(db, &incrementalConfig)).To(Succeed())
 
-			_, err := resolveDeletionOrder(db, &fullConfig, false)
+			_, err := resolveDeletionOrder(db, &fullConfig, false, true)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(incrementalConfig.Timestamp))
 			Expect(err.Error()).To(ContainSubstring("--cascade"))
+		})
+
+		It("tells a cascade-unsupported caller the backup will be picked up later, not to use --cascade", func() {
+			db, _ := history.InitializeHistoryDatabase(historyDBPath)
+			defer db.Close()
+			Expect(history.StoreBackupHistory(db, &fullConfig)).To(Succeed())
+			Expect(history.StoreBackupHistory(db, &incrementalConfig)).To(Succeed())
+
+			_, err := resolveDeletionOrder(db, &fullConfig, false, false)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(incrementalConfig.Timestamp))
+			Expect(err.Error()).NotTo(ContainSubstring("--cascade"))
 		})
 
 		It("includes the dependent, target last, when cascade is true", func() {
@@ -81,7 +94,7 @@ var _ = Describe("delete-backup internal tests", func() {
 			Expect(history.StoreBackupHistory(db, &fullConfig)).To(Succeed())
 			Expect(history.StoreBackupHistory(db, &incrementalConfig)).To(Succeed())
 
-			order, err := resolveDeletionOrder(db, &fullConfig, true)
+			order, err := resolveDeletionOrder(db, &fullConfig, true, true)
 			Expect(err).To(BeNil())
 			Expect(order).To(HaveLen(2))
 			Expect(order[0].Timestamp).To(Equal(incrementalConfig.Timestamp))
@@ -95,7 +108,7 @@ var _ = Describe("delete-backup internal tests", func() {
 			Expect(history.StoreBackupHistory(db, &incrementalConfig)).To(Succeed())
 			Expect(history.SetDateDeleted(db, incrementalConfig.Timestamp, "20260102000000")).To(Succeed())
 
-			order, err := resolveDeletionOrder(db, &fullConfig, false)
+			order, err := resolveDeletionOrder(db, &fullConfig, false, true)
 			Expect(err).To(BeNil())
 			Expect(order).To(HaveLen(1))
 			Expect(order[0].Timestamp).To(Equal(fullConfig.Timestamp))
@@ -116,7 +129,7 @@ var _ = Describe("delete-backup internal tests", func() {
 			Expect(os.WriteFile(lockPath, []byte(fmt.Sprintf("%d\n", cmd.Process.Pid)), 0644)).To(Succeed())
 			defer os.Remove(lockPath)
 
-			_, err := resolveDeletionOrder(db, &fullConfig, true)
+			_, err := resolveDeletionOrder(db, &fullConfig, true, true)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(incrementalConfig.Timestamp))
 			Expect(err.Error()).To(ContainSubstring("in progress"))
@@ -130,7 +143,7 @@ var _ = Describe("delete-backup internal tests", func() {
 			Expect(history.StoreBackupHistory(db, &incrementalConfig)).To(Succeed())
 			_ = os.Remove(fmt.Sprintf("/tmp/%s.lck", incrementalConfig.Timestamp))
 
-			order, err := resolveDeletionOrder(db, &fullConfig, true)
+			order, err := resolveDeletionOrder(db, &fullConfig, true, true)
 			Expect(err).To(BeNil())
 			Expect(order).To(HaveLen(2))
 		})
@@ -156,7 +169,7 @@ var _ = Describe("delete-backup internal tests", func() {
 			Expect(history.StoreBackupHistory(db, &incrementalConfig)).To(Succeed())
 			Expect(history.StoreBackupHistory(db, &incr2Config)).To(Succeed())
 
-			order, err := resolveDeletionOrder(db, &fullConfig, true)
+			order, err := resolveDeletionOrder(db, &fullConfig, true, true)
 			Expect(err).To(BeNil())
 			Expect(order).To(HaveLen(3))
 			Expect(order[0].Timestamp).To(Equal(incr2Config.Timestamp))
@@ -183,8 +196,23 @@ var _ = Describe("delete-backup internal tests", func() {
 			Expect(err).To(BeNil())
 			Expect(w.Close()).To(Succeed())
 			os.Stdin = r
-			return promptForDeletion([]*history.BackupConfig{{Timestamp: "20260101000000", DatabaseName: "testdb"}})
+			return promptForDeletion(bufio.NewReader(os.Stdin), []*history.BackupConfig{{Timestamp: "20260101000000", DatabaseName: "testdb"}})
 		}
+
+		It("keeps every answer when one piped write backs several prompts sharing a reader", func() {
+			r, w, err := os.Pipe()
+			Expect(err).To(BeNil())
+			_, err = w.WriteString("y\nn\nyes\n")
+			Expect(err).To(BeNil())
+			Expect(w.Close()).To(Succeed())
+			os.Stdin = r
+			reader := bufio.NewReader(os.Stdin)
+			backups := []*history.BackupConfig{{Timestamp: "20260101000000", DatabaseName: "testdb"}}
+
+			Expect(promptForDeletion(reader, backups)).To(BeTrue())
+			Expect(promptForDeletion(reader, backups)).To(BeFalse())
+			Expect(promptForDeletion(reader, backups)).To(BeTrue())
+		})
 
 		It("accepts y", func() {
 			Expect(respond("y\n")).To(BeTrue())

@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
@@ -92,7 +93,7 @@ var _ = Describe("delete-backups-before internal tests", func() {
 			Expect(deleted).To(Equal(0))
 		})
 
-		It("returns an error (not fatal) for a candidate blocked by a live dependent without cascade, leaving it for the next loop iteration to skip via a warning", func() {
+		It("returns an error (not fatal, and without suggesting --cascade) for a candidate blocked by a live dependent, leaving it for the next loop iteration to skip via a warning", func() {
 			db, _ := history.InitializeHistoryDatabase(historyDBPath)
 			defer db.Close()
 
@@ -108,7 +109,7 @@ var _ = Describe("delete-backups-before internal tests", func() {
 
 			_, err := deleteBackupChain(db, full.Timestamp, opts)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("--cascade"))
+			Expect(err.Error()).NotTo(ContainSubstring("--cascade"))
 
 			// incr has no dependents of its own, so its turn in the loop still succeeds even
 			// though its base was skipped.
@@ -166,7 +167,7 @@ var _ = Describe("delete-backups-before internal tests", func() {
 			os.Stdin = r
 			defer func() { os.Stdin = origStdin }()
 
-			deleted, err := deleteBackupChain(db, full.Timestamp, deleteChainOptions{noPrompt: false})
+			deleted, err := deleteBackupChain(db, full.Timestamp, deleteChainOptions{noPrompt: false, stdinReader: bufio.NewReader(os.Stdin)})
 			Expect(err).To(BeNil())
 			Expect(deleted).To(Equal(0))
 		})
