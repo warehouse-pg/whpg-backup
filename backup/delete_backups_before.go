@@ -19,10 +19,12 @@ func DoDeleteBackupsBeforeInit(cmd *cobra.Command) {
 
 // DoDeleteBackupsBefore deletes every backup older than cutoff by calling the same per-backup
 // pipeline as delete-backup (deleteBackupChain) once per candidate timestamp. There is no
-// --cascade here: it would let deletion reach past the cutoff into newer dependents. A backup
-// that can't be deleted right now (still in progress, or blocked by a live dependent) is logged
-// as a warning and skipped rather than aborting the rest of the run; a dependent skipped this way
-// gets swept up on a later run once it's old enough to be a candidate itself.
+// --cascade here: it would let deletion reach past the cutoff into newer dependents. Incremental
+// backups are never touched (skipIncremental) since this is an unattended sweep, not a deliberate
+// delete-backup call; only full backups with no live dependents are removed. A backup that can't
+// be deleted right now (in progress, incremental, or blocked by a live dependent) is logged as a
+// warning and skipped rather than aborting the rest of the run; a full backup skipped for having
+// a live dependent gets swept up on a later run once that dependent is gone.
 func DoDeleteBackupsBefore(cutoff string) {
 	SetLoggerVerbosity()
 
@@ -47,6 +49,7 @@ func DoDeleteBackupsBefore(cutoff string) {
 	pluginConfigPath := MustGetFlagString(options.PLUGIN_CONFIG)
 	pluginConfig, segCluster := setupDeletionTargets(coordinatorDataDir, pluginConfigPath)
 	opts := deleteChainOptions{
+		skipIncremental:    true,
 		noPrompt:           MustGetFlagBool(options.NO_PROMPT),
 		pluginConfigPath:   pluginConfigPath,
 		pluginConfig:       pluginConfig,

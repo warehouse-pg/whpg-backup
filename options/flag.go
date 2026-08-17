@@ -107,7 +107,9 @@ func SetDeleteBackupFlagDefaults(flagSet *pflag.FlagSet) {
 
 // SetDeleteBackupsBeforeFlagDefaults is SetDeleteBackupFlagDefaults minus --cascade: cascading
 // past the cutoff would delete backups newer than the given timestamp, so delete-backups-before
-// always skips (with a warning) any candidate blocked by a live dependent instead.
+// always skips (with a warning) any candidate blocked by a live dependent instead. It also never
+// deletes an incremental backup at all, regardless of dependents, since this is an unattended
+// sweep rather than a deliberate delete-backup call.
 func SetDeleteBackupsBeforeFlagDefaults(flagSet *pflag.FlagSet) {
 	flagSet.Bool(DEBUG, false, "Print verbose and debug log messages")
 	flagSet.Bool("help", false, "Help for delete-backups-before")

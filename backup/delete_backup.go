@@ -183,7 +183,12 @@ type deleteChainOptions struct {
 	cascade bool
 	// cascadeSupported controls whether a blocked-by-dependents error suggests --cascade;
 	// delete-backups-before has no such flag, so it leaves this false.
-	cascadeSupported   bool
+	cascadeSupported bool
+	// skipIncremental makes deleteBackupChain refuse to delete an incremental backup outright,
+	// regardless of dependents. delete-backups-before sets this so its unattended sweep never
+	// removes part of an incremental chain; delete-backup (explicit, user-confirmed) leaves it
+	// false so --cascade can still delete incrementals on request.
+	skipIncremental    bool
 	noPrompt           bool
 	pluginConfigPath   string
 	pluginConfig       *utils.PluginConfig
@@ -212,6 +217,9 @@ func deleteBackupChain(historyDB *sql.DB, timestamp string, opts deleteChainOpti
 	}
 	if err := checkNotBackupInProgress(target); err != nil {
 		return 0, err
+	}
+	if opts.skipIncremental && target.Incremental {
+		return 0, errors.Errorf("Backup %s is an incremental backup; delete-backups-before does not delete incremental backups", timestamp)
 	}
 
 	backupsToDelete, err := resolveDeletionOrder(historyDB, target, opts.cascade, opts.cascadeSupported)

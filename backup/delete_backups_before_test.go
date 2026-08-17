@@ -118,6 +118,29 @@ var _ = Describe("delete-backups-before internal tests", func() {
 			Expect(deleted).To(Equal(1))
 		})
 
+		It("skips an incremental backup outright when skipIncremental is set, even with no dependents of its own", func() {
+			db, _ := history.InitializeHistoryDatabase(historyDBPath)
+			defer db.Close()
+
+			full := newConfig("20260101000000", []history.RestorePlanEntry{{Timestamp: "20260101000000"}})
+			incr := newConfig("20260101010000", []history.RestorePlanEntry{
+				{Timestamp: "20260101000000", TableFQNs: []string{"public.foo"}},
+				{Timestamp: "20260101010000", TableFQNs: []string{"public.foo"}},
+			})
+			Expect(history.StoreBackupHistory(db, &full)).To(Succeed())
+			Expect(history.StoreBackupHistory(db, &incr)).To(Succeed())
+
+			opts := deleteChainOptions{skipIncremental: true, noPrompt: true, segCluster: testCluster}
+
+			_, err := deleteBackupChain(db, incr.Timestamp, opts)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("incremental"))
+
+			bc, err := history.GetBackupConfig(incr.Timestamp, db)
+			Expect(err).To(BeNil())
+			Expect(isFullyDeleted(bc.DateDeleted)).To(BeFalse())
+		})
+
 		It("returns an error (not fatal) for a candidate that is still actually in progress", func() {
 			db, _ := history.InitializeHistoryDatabase(historyDBPath)
 			defer db.Close()

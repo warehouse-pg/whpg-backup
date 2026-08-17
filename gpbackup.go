@@ -37,8 +37,12 @@ func main() {
 
 	var deleteBackupsBeforeCmd = &cobra.Command{
 		Use:   "delete-backups-before <timestamp>",
-		Short: "Delete all backup sets older than a given timestamp",
-		Args:  cobra.ExactArgs(1),
+		Short: "Delete full backups older than a given timestamp",
+		Long: "Delete every full backup older than <timestamp> that has no live dependent backup.\n" +
+			"Incremental backups are never deleted by this command, and a full backup with a live\n" +
+			"incremental dependent is skipped (with a warning) until that dependent is gone. Use\n" +
+			"delete-backup --cascade to remove an incremental chain explicitly.",
+		Args: cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			defer DoDeleteBackupTeardown()
 			UseCmdFlags(cmd.Flags())
