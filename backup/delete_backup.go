@@ -444,20 +444,30 @@ func deleteLocalBackupFiles(segCluster *cluster.Cluster, bc *history.BackupConfi
 	return nil
 }
 
-// deleteLocalCoordinatorFiles removes the coordinator's own local backup directory for bc.
-// Runs directly on this host (no ssh) since delete-backup always executes on the coordinator.
-func deleteLocalCoordinatorFiles(coordinatorDataDir string, bc *history.BackupConfig) error {
+// coordinatorFPInfo builds the FilePathInfo needed to locate bc's own files on the coordinator's
+// local disk (content -1 only), shared by every command that needs local backup paths without a
+// full cluster topology.
+func coordinatorFPInfo(coordinatorDataDir string, bc *history.BackupConfig) (filepath.FilePathInfo, error) {
 	segPrefix, err := backupSegPrefix(bc)
 	if err != nil {
-		return err
+		return filepath.FilePathInfo{}, err
 	}
 
-	fpInfo := filepath.FilePathInfo{
+	return filepath.FilePathInfo{
 		SegDirMap:              map[int]string{-1: coordinatorDataDir},
 		Timestamp:              bc.Timestamp,
 		UserSpecifiedBackupDir: bc.BackupDir,
 		UserSpecifiedSegPrefix: segPrefix,
 		SingleBackupDir:        bc.SingleBackupDir,
+	}, nil
+}
+
+// deleteLocalCoordinatorFiles removes the coordinator's own local backup directory for bc.
+// Runs directly on this host (no ssh) since delete-backup always executes on the coordinator.
+func deleteLocalCoordinatorFiles(coordinatorDataDir string, bc *history.BackupConfig) error {
+	fpInfo, err := coordinatorFPInfo(coordinatorDataDir, bc)
+	if err != nil {
+		return err
 	}
 	dir := fpInfo.GetDirForContent(-1)
 	if !path.IsAbs(dir) {

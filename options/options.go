@@ -188,41 +188,53 @@ func QuoteTableNames(conn *dbconn.DBConn, tableNames []string) ([]string, error)
 	return result, nil
 }
 
+// SplitFQN splits a "schema.table" argument into its two parts, honoring double-quoted
+// identifiers (which may themselves contain a literal dot) the same way Postgres's own
+// quote_ident/--include-table parsing does. It reports whether each part was quoted so callers
+// can decide how to fold or escape it.
+func SplitFQN(fqn string) (schema string, table string, schemaQuoted bool, tableQuoted bool, err error) {
+	var quotesPattern *regexp.Regexp
+	schemaQuoted = strings.HasPrefix(fqn, "\"")
+	tableQuoted = strings.HasSuffix(fqn, "\"")
+
+	if schemaQuoted && tableQuoted {
+		quotesPattern = regexp.MustCompile(`^"|"$|"\."`)
+	} else if schemaQuoted {
+		quotesPattern = regexp.MustCompile(`^"|"\.`)
+	} else if tableQuoted {
+		quotesPattern = regexp.MustCompile(`"$|\."`)
+	} else {
+		quotesPattern = regexp.MustCompile(`\.`)
+	}
+	parts := quotesPattern.Split(fqn, -1)
+
+	fqnParts := make([]string, 0)
+	for _, part := range parts {
+		if len(part) > 0 {
+			fqnParts = append(fqnParts, part)
+		}
+	}
+
+	if len(fqnParts) != 2 {
+		return "", "", false, false, errors.Errorf("cannot process this Fully Qualified Name: %s", fqn)
+	}
+
+	return fqnParts[0], fqnParts[1], schemaQuoted, tableQuoted, nil
+}
+
 func SeparateSchemaAndTable(tableNames []string) ([]Relation, error) {
 	fqnSlice := make([]Relation, 0)
 
 	for _, fqn := range tableNames {
-
-		var quotesPattern *regexp.Regexp
-		schemaNameIsQuoted := strings.HasPrefix(fqn, "\"")
-		tableNameIsQuoted := strings.HasSuffix(fqn, "\"")
-
-		if schemaNameIsQuoted && tableNameIsQuoted {
-			quotesPattern = regexp.MustCompile(`^"|"$|"\."`)
-		} else if schemaNameIsQuoted {
-			quotesPattern = regexp.MustCompile(`^"|"\.`)
-		} else if tableNameIsQuoted {
-			quotesPattern = regexp.MustCompile(`"$|\."`)
-		} else {
-			quotesPattern = regexp.MustCompile(`\.`)
-		}
-		parts := quotesPattern.Split(fqn, -1)
-
-		fqnParts := make([]string, 0)
-		for _, part := range parts {
-			if len(part) > 0 {
-				fqnParts = append(fqnParts, part)
-			}
-		}
-
-		if len(fqnParts) != 2 {
-			return nil, errors.Errorf("cannot process this Fully Qualified Name: %s", fqn)
+		schema, table, _, _, err := SplitFQN(fqn)
+		if err != nil {
+			return nil, err
 		}
 
 		// Properly escape quotes before running quote ident. Postgres
 		// quote_ident escapes quotes by doubling them
-		schema := utils.EscapeSingleQuotes(fqnParts[0])
-		table := utils.EscapeSingleQuotes(fqnParts[1])
+		schema = utils.EscapeSingleQuotes(schema)
+		table = utils.EscapeSingleQuotes(table)
 
 		currFqn := Relation{
 			SchemaOid: 0,
