@@ -81,6 +81,12 @@ func RegisterDeleteBackupFlags(flagSet *pflag.FlagSet) {
 	options.SetDeleteBackupFlagDefaults(flagSet)
 }
 
+// RegisterDeleteBackupsBeforeFlags is RegisterDeleteBackupFlags' counterpart for
+// delete-backups-before, which has no --cascade flag; see SetDeleteBackupsBeforeFlagDefaults.
+func RegisterDeleteBackupsBeforeFlags(flagSet *pflag.FlagSet) {
+	options.SetDeleteBackupsBeforeFlagDefaults(flagSet)
+}
+
 // UseCmdFlags points MustGetFlag* reads at the given (already-registered, already-parsed)
 // flag set. Call this at the start of a subcommand's Run, after cobra has selected which
 // subcommand's flags actually hold the parsed values.

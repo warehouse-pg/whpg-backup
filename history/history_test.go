@@ -339,6 +339,41 @@ var _ = Describe("backup/history tests", func() {
 		})
 	})
 
+	Describe("GetBackupTimestampsBefore", func() {
+		It("returns timestamps strictly less than cutoff, oldest first", func() {
+			db, _ := history.InitializeHistoryDatabase(historyDBPath)
+			defer db.Close()
+
+			older := history.BackupConfig{DatabaseName: "testdb1", RestorePlan: []history.RestorePlanEntry{}, Timestamp: "20260101000000"}
+			newer := history.BackupConfig{DatabaseName: "testdb1", RestorePlan: []history.RestorePlanEntry{}, Timestamp: "20260102000000"}
+			Expect(history.StoreBackupHistory(db, &newer)).To(Succeed())
+			Expect(history.StoreBackupHistory(db, &older)).To(Succeed())
+
+			timestamps, err := history.GetBackupTimestampsBefore(db, "20260102000000")
+			Expect(err).To(BeNil())
+			Expect(timestamps).To(Equal([]string{older.Timestamp}))
+		})
+
+		It("excludes a backup whose timestamp equals the cutoff", func() {
+			db, _ := history.InitializeHistoryDatabase(historyDBPath)
+			defer db.Close()
+
+			atCutoff := history.BackupConfig{DatabaseName: "testdb1", RestorePlan: []history.RestorePlanEntry{}, Timestamp: "20260101000000"}
+			Expect(history.StoreBackupHistory(db, &atCutoff)).To(Succeed())
+
+			timestamps, err := history.GetBackupTimestampsBefore(db, atCutoff.Timestamp)
+			Expect(err).To(BeNil())
+			Expect(timestamps).To(BeEmpty())
+		})
+
+		It("returns nothing when no backups predate the cutoff", func() {
+			db, _ := history.InitializeHistoryDatabase(historyDBPath)
+			defer db.Close()
+
+			Expect(history.GetBackupTimestampsBefore(db, "20260101000000")).To(BeEmpty())
+		})
+	})
+
 	Describe("SetDateDeleted", func() {
 		It("updates only the targeted backup's date_deleted", func() {
 			db, _ := history.InitializeHistoryDatabase(historyDBPath)
