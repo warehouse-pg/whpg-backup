@@ -24,7 +24,7 @@ func DoListBackupsInit(cmd *cobra.Command) {
 func DoListBackups() {
 	SetLoggerVerbosity()
 
-	format := MustGetFlagString(options.FORMAT)
+	format := strings.ToLower(MustGetFlagString(options.FORMAT))
 	if format != "text" && format != "json" {
 		gplog.FatalOnError(fmt.Errorf("invalid --format value '%s', must be 'text' or 'json'", format))
 	}
@@ -67,10 +67,21 @@ func DoListBackups() {
 	}
 
 	if format == "json" {
-		printBackupsListJSON(backups)
+		printBackupsListJSON(backups, fpInfo)
 	} else {
-		printBackupsList(backups)
+		printBackupsList(backups, fpInfo)
 	}
+}
+
+// actualBackupDir resolves the on-disk backup directory for b. BackupConfig.BackupDir only
+// records a --backup-dir override; a backup taken without that flag leaves it empty and lives
+// under the coordinator data dir instead, so fall back to the same default-location formula
+// filepath.FilePathInfo.GetDirForContent uses.
+func actualBackupDir(fpInfo filepath.FilePathInfo, b history.BackupConfig) string {
+	fpInfo.Timestamp = b.Timestamp
+	fpInfo.UserSpecifiedBackupDir = b.BackupDir
+	fpInfo.SingleBackupDir = b.SingleBackupDir
+	return fpInfo.GetDirForContent(-1)
 }
 
 func filterOutDeletedBackups(backups []history.BackupConfig) []history.BackupConfig {
@@ -83,16 +94,17 @@ func filterOutDeletedBackups(backups []history.BackupConfig) []history.BackupCon
 	return filtered
 }
 
-func printBackupsList(backups []history.BackupConfig) {
+func printBackupsList(backups []history.BackupConfig, fpInfo filepath.FilePathInfo) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 3, ' ', 0)
 	defer w.Flush()
 
-	fmt.Fprintln(w, "timestamp\tdate\tstatus\tdatabase\ttype\tobject filtering\tplugin\tduration\tdate deleted")
+	fmt.Fprintln(w, "timestamp\tdate\tstatus\tdatabase\ttype\tobject filtering\tplugin\tduration\tdate deleted\tbackup dir\tcompressed\tcompression type")
 	for _, b := range backups {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%t\t%s\n",
 			b.Timestamp, formatHistoryTimestamp(b.Timestamp), b.Status, b.DatabaseName,
 			backupTypeString(b), objectFilteringString(b), b.Plugin,
-			backupDuration(b.Timestamp, b.EndTime), b.DateDeleted)
+			backupDuration(b.Timestamp, b.EndTime), formatHistoryTimestamp(b.DateDeleted),
+			actualBackupDir(fpInfo, b), b.Compressed, b.CompressionType)
 	}
 }
 
@@ -106,9 +118,12 @@ type backupListEntry struct {
 	Plugin          string `json:"plugin"`
 	Duration        string `json:"duration"`
 	DateDeleted     string `json:"date_deleted"`
+	BackupDir       string `json:"backup_dir"`
+	Compressed      bool   `json:"compressed"`
+	CompressionType string `json:"compression_type"`
 }
 
-func printBackupsListJSON(backups []history.BackupConfig) {
+func printBackupsListJSON(backups []history.BackupConfig, fpInfo filepath.FilePathInfo) {
 	entries := make([]backupListEntry, 0, len(backups))
 	for _, b := range backups {
 		entries = append(entries, backupListEntry{
@@ -120,7 +135,10 @@ func printBackupsListJSON(backups []history.BackupConfig) {
 			ObjectFiltering: objectFilteringString(b),
 			Plugin:          b.Plugin,
 			Duration:        backupDuration(b.Timestamp, b.EndTime),
-			DateDeleted:     b.DateDeleted,
+			DateDeleted:     formatHistoryTimestamp(b.DateDeleted),
+			BackupDir:       actualBackupDir(fpInfo, b),
+			Compressed:      b.Compressed,
+			CompressionType: b.CompressionType,
 		})
 	}
 
@@ -186,7 +204,7 @@ func DoListBackupsTeardown() {
 	if err := recover(); err != nil {
 		if gplog.GetErrorCode() == 2 {
 			// gplog.FatalOnError already logged to the log file, but not to the terminal.
-			fmt.Println(err)
+			fmt.Fprintln(os.Stderr, err)
 		} else {
 			gplog.Error("%v", err)
 			gplog.SetErrorCode(1)

@@ -127,6 +127,7 @@ func SetListBackupsFlagDefaults(flagSet *pflag.FlagSet) {
 	flagSet.Bool("help", false, "Help for list-backups")
 	flagSet.Bool(QUIET, false, "Suppress non-warning, non-error log messages")
 	flagSet.Bool(SHOW_ALL, false, "Also show backups that have been deleted")
+	flagSet.Bool(VERBOSE, false, "Print verbose log messages")
 }
 
 func SetRestoreFlagDefaults(flagSet *pflag.FlagSet) {
