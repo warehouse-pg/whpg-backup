@@ -257,8 +257,8 @@ func deleteBackupChain(historyDB *sql.DB, timestamp string, opts deleteChainOpti
 // Returns dependents (transitive, not-yet-deleted) sorted newest-first, followed by target
 // itself last, or an error if dependents exist and cascade is false. cascadeSupported controls
 // only the wording of that error: callers without a --cascade flag of their own (e.g.
-// delete-backups-before) get told the backup will be picked up once its dependents age out,
-// instead of being pointed at a flag they don't have.
+// delete-backups-before) get pointed at "delete-backup --cascade" by name instead of at a bare
+// --cascade flag they don't have.
 func resolveDeletionOrder(historyDB *sql.DB, target *history.BackupConfig, cascade bool, cascadeSupported bool) ([]*history.BackupConfig, error) {
 	timestamp := target.Timestamp
 	visited := map[string]bool{timestamp: true}
@@ -301,7 +301,7 @@ func resolveDeletionOrder(historyDB *sql.DB, target *history.BackupConfig, casca
 		}
 		if !cascadeSupported {
 			return nil, errors.Errorf(
-				"Backup %s is a dependency of the following backup(s): %s; skipping until they age past the cutoff",
+				"Backup %s is a dependency of the following backup(s): %s; skipping. Use delete-backup --cascade to delete this chain",
 				timestamp, strings.Join(names, ", "))
 		}
 		return nil, errors.Errorf(

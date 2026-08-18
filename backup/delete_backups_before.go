@@ -23,8 +23,10 @@ func DoDeleteBackupsBeforeInit(cmd *cobra.Command) {
 // backups are never touched (skipIncremental) since this is an unattended sweep, not a deliberate
 // delete-backup call; only full backups with no live dependents are removed. A backup that can't
 // be deleted right now (in progress, incremental, or blocked by a live dependent) is logged as a
-// warning and skipped rather than aborting the rest of the run; a full backup skipped for having
-// a live dependent gets swept up on a later run once that dependent is gone.
+// warning and skipped rather than aborting the rest of the run. A full backup skipped for having
+// a live dependent stays skipped forever via this command, since that dependent is itself an
+// incremental backup this command will never delete; clearing such a chain requires
+// delete-backup --cascade.
 func DoDeleteBackupsBefore(cutoff string) {
 	SetLoggerVerbosity()
 

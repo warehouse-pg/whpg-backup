@@ -76,7 +76,7 @@ var _ = Describe("delete-backup internal tests", func() {
 			Expect(err.Error()).To(ContainSubstring("--cascade"))
 		})
 
-		It("tells a cascade-unsupported caller the backup will be picked up later, not to use --cascade", func() {
+		It("tells a cascade-unsupported caller to use delete-backup --cascade by name", func() {
 			db, _ := history.InitializeHistoryDatabase(historyDBPath)
 			defer db.Close()
 			Expect(history.StoreBackupHistory(db, &fullConfig)).To(Succeed())
@@ -85,7 +85,7 @@ var _ = Describe("delete-backup internal tests", func() {
 			_, err := resolveDeletionOrder(db, &fullConfig, false, false)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring(incrementalConfig.Timestamp))
-			Expect(err.Error()).NotTo(ContainSubstring("--cascade"))
+			Expect(err.Error()).To(ContainSubstring("delete-backup --cascade"))
 		})
 
 		It("includes the dependent, target last, when cascade is true", func() {
