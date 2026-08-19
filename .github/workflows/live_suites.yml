@@ -223,14 +223,30 @@ jobs:
           # Flags copied from the server repo's own CI, with the per-major
           # differences carried in matrix.extra_configure.
           #
-          # WHPG6 builds with --disable-orca: ORCA there links against xerces-c
-          # 3.1, which the build image does not carry, and the in-tree helper that
-          # builds it does not leave a library the linker resolves as -lxerces-c,
-          # so ld falls through to the system xerces -- a different major -- and
-          # the build fails at link time. These suites read catalog metadata, so
-          # which optimizer plans the queries does not change what they assert, and
-          # WHPG6 with ORCA stays covered by whpg-backup-packaging's lane against
-          # the released package.
+          # WHPG6 builds with --disable-orca. The blocker is library search order,
+          # not a missing library: the image ships xerces-c-devel, whose
+          # /usr/lib64/libxerces-c.so is what -lxerces-c resolves against, and ld
+          # searches /usr/lib64 ahead of /usr/local/lib -- so that 3.2 symlink wins
+          # wherever a 3.1 build is installed, which is why adding unversioned
+          # symlinks next to it changes nothing. Headers resolve the other way
+          # round, /usr/local/include before /usr/include, and that asymmetry is the
+          # failure: 3.1 headers against a 3.2 library. Xerces versions its inline
+          # namespace, so xercesc_3_1 and xercesc_3_2 are disjoint symbol sets and
+          # the mismatch surfaces as "undefined reference to xercesc_3_1::..."
+          # rather than as anything resembling a version problem.
+          #
+          # It can be enabled -- `yum remove -y xerces-c-devel` before configure, or
+          # point configure at the 3.1 build with --with-libraries=/usr/local/lib
+          # (note CONFIGURE_FLAGS passes --with-libraries= empty today). ORCA on 6 is
+          # also C++98-era code and needs a xerces built the same way, so CXXFLAGS
+          # would have to carry --std=c++98 across both builds, and they have to
+          # agree. None of that applies to WHPG7, which links the distro xerces and
+          # builds ORCA as C++14.
+          #
+          # Not worth it here: these suites read catalog metadata, so which optimizer
+          # plans the queries does not change what they assert, and WHPG6 with ORCA
+          # stays covered by whpg-backup-packaging's lane against the released
+          # package.
           CC='ccache gcc -m64' CFLAGS='-O2 -g3' \
           LDFLAGS='-Wl,--enable-new-dtags -Wl,--export-dynamic' \
           ./configure ${{ matrix.extra_configure }} ${CONFIGURE_FLAGS} --disable-rpath \
