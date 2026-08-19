@@ -81,6 +81,14 @@ func actualBackupDir(fpInfo filepath.FilePathInfo, b history.BackupConfig) strin
 	fpInfo.Timestamp = b.Timestamp
 	fpInfo.UserSpecifiedBackupDir = b.BackupDir
 	fpInfo.SingleBackupDir = b.SingleBackupDir
+	// A --backup-dir backup without --single-backup-dir stores its segment directories under a
+	// prefix (e.g. "gpseg") that isn't recorded in history; discover it from disk the same way
+	// delete-backup does, best-effort, so the printed path matches the real on-disk location.
+	if b.BackupDir != "" && !b.SingleBackupDir {
+		if segPrefix, _, err := filepath.ParseSegPrefix(b.BackupDir, b.Timestamp); err == nil {
+			fpInfo.UserSpecifiedSegPrefix = segPrefix
+		}
+	}
 	return fpInfo.GetDirForContent(-1)
 }
 

@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -109,6 +110,10 @@ var _ = Describe("list-backups internal tests", func() {
 			}
 		})
 
+		AfterEach(func() {
+			operating.InitializeSystemFunctions()
+		})
+
 		Context("--format=json", func() {
 			It("prints an empty JSON array instead of crashing when no history db exists", func() {
 				useListBackupsFlags(map[string]string{options.FORMAT: "json"})
@@ -134,6 +139,38 @@ var _ = Describe("list-backups internal tests", func() {
 				useListBackupsFlags(map[string]string{options.DEBUG: "true"})
 				Expect(func() { captureStdout(DoListBackups) }).ToNot(Panic())
 				Expect(gplog.GetVerbosity()).To(Equal(gplog.LOGDEBUG))
+			})
+		})
+
+		Context("--backup-dir", func() {
+			It("prints the real on-disk segment prefix, not a literal -1", func() {
+				backupTimestamp := "20260202020202"
+				backupDir := GinkgoT().TempDir()
+				Expect(os.MkdirAll(filepath.Join(backupDir, "gpseg-1", "backups", "20260202", backupTimestamp), 0755)).To(Succeed())
+
+				historyDBPath := filepath.Join(tmpDir, "gpbackup_history.db")
+				db, err := history.InitializeHistoryDatabase(historyDBPath)
+				Expect(err).ToNot(HaveOccurred())
+				config := history.BackupConfig{
+					DatabaseName:     "testdb",
+					ExcludeRelations: []string{},
+					ExcludeSchemas:   []string{},
+					IncludeRelations: []string{},
+					IncludeSchemas:   []string{},
+					RestorePlan:      []history.RestorePlanEntry{{Timestamp: backupTimestamp}},
+					Timestamp:        backupTimestamp,
+					BackupDir:        backupDir,
+				}
+				Expect(history.StoreBackupHistory(db, &config)).To(Succeed())
+				Expect(db.Close()).To(Succeed())
+
+				useListBackupsFlags(map[string]string{options.FORMAT: "json"})
+				output := captureStdout(DoListBackups)
+
+				var entries []backupListEntry
+				Expect(json.Unmarshal([]byte(output), &entries)).To(Succeed())
+				Expect(entries).To(HaveLen(1))
+				Expect(entries[0].BackupDir).To(Equal(filepath.Join(backupDir, "gpseg-1", "backups", "20260202", backupTimestamp)))
 			})
 		})
 
