@@ -111,7 +111,7 @@ var _ = Describe("list-backups internal tests", func() {
 		})
 
 		AfterEach(func() {
-			operating.InitializeSystemFunctions()
+			operating.System = operating.InitializeSystemFunctions()
 		})
 
 		Context("--format=json", func() {
