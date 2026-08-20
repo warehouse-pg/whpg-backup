@@ -97,8 +97,9 @@ func DoFindTable(tableFQN string) {
 }
 
 // findBackupsContainingTable scans every stored backup and returns the BackupConfigs of those
-// that are successful, not deleted, not metadata-only, and whose table-of-contents lists
-// schema.table among its data entries, oldest first. Backups are inspected concurrently (bounded
+// that are successful, not deleted, not metadata-only, don't have a failed delete attempt against
+// them, and whose table-of-contents lists schema.table among its data entries, newest first
+// (matching list-backups' order). Backups are inspected concurrently (bounded
 // by findTableScanConcurrency), since each check is dominated by I/O (a history DB query plus a
 // TOC file read) rather than CPU. A backup whose history entry or TOC can't be read (e.g. a
 // malformed row, or local files removed by something other than delete-backup) is skipped, with
@@ -122,7 +123,8 @@ func findBackupsContainingTable(historyDB *sql.DB, coordinatorDataDir string, sc
 				warnings[i] = fmt.Sprintf("Skipping backup %s: could not read its history entry: %s", ts, err.Error())
 				return nil
 			}
-			if bc.Status != history.BackupStatusSucceed || bc.MetadataOnly || isFullyDeleted(bc.DateDeleted) {
+			if bc.Status != history.BackupStatusSucceed || bc.MetadataOnly ||
+				isFullyDeleted(bc.DateDeleted) || isDeleteFailed(bc.DateDeleted) {
 				return nil
 			}
 
@@ -155,10 +157,11 @@ func findBackupsContainingTable(historyDB *sql.DB, coordinatorDataDir string, sc
 		}
 	}
 
+	// Walk results back-to-front so matches come out newest first, matching list-backups' order.
 	matches := make([]*history.BackupConfig, 0)
-	for _, bc := range results {
-		if bc != nil {
-			matches = append(matches, bc)
+	for i := len(results) - 1; i >= 0; i-- {
+		if results[i] != nil {
+			matches = append(matches, results[i])
 		}
 	}
 

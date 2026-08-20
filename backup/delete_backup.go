@@ -53,6 +53,12 @@ func isFullyDeleted(dateDeleted string) bool {
 	}
 }
 
+// isDeleteFailed reports whether a previous delete attempt on the backup failed, leaving its
+// on-disk/plugin state unreliable.
+func isDeleteFailed(dateDeleted string) bool {
+	return dateDeleted == deleteStatusPluginFailed || dateDeleted == deleteStatusLocalFailed
+}
+
 // checkNotBackupInProgress errors if bc is still being written by a live gpbackup run.
 //
 // Status alone can't tell: SIGKILL skips the defer/recover that would set Status to
