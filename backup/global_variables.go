@@ -94,6 +94,13 @@ func RegisterListBackupsFlags(flagSet *pflag.FlagSet) {
 	options.SetListBackupsFlagDefaults(flagSet)
 }
 
+// RegisterFindTableFlags defines the find-table flag set without touching the shared cmdFlags
+// pointer, since that must keep pointing at whichever subcommand cobra actually invokes; see
+// UseCmdFlags.
+func RegisterFindTableFlags(flagSet *pflag.FlagSet) {
+	options.SetFindTableFlagDefaults(flagSet)
+}
+
 // UseCmdFlags points MustGetFlag* reads at the given (already-registered, already-parsed)
 // flag set. Call this at the start of a command's Run, after cobra has selected which
 // subcommand's flags actually hold the parsed values.

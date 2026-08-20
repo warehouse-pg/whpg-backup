@@ -62,11 +62,27 @@ func main() {
 		}}
 	rootCmd.AddCommand(listBackupsCmd)
 
+	var findTableCmd = &cobra.Command{
+		Use:   "find-table <schema.table>",
+		Short: "List successful backups that include a given table",
+		Long: "Display every successful backup that has not been deleted and that includes data for\n" +
+			"the given table. Metadata-only backups are never included, since they contain no table\n" +
+			"data. schemaname.tablename is parsed using the same quoting rules as the --include-table\n" +
+			"option in gpbackup and gprestore.",
+		Args: cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			defer DoListBackupsTeardown()
+			UseCmdFlags(cmd.Flags())
+			DoFindTable(args[0])
+		}}
+	rootCmd.AddCommand(findTableCmd)
+
 	rootCmd.SetArgs(options.HandleSingleDashes(os.Args[1:]))
 	DoInit(rootCmd)
 	DoDeleteBackupInit(deleteBackupCmd)
 	DoDeleteBackupsBeforeInit(deleteBackupsBeforeCmd)
 	DoListBackupsInit(listBackupsCmd)
+	DoFindTableInit(findTableCmd)
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(2)
 	}

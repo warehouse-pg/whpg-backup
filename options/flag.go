@@ -130,6 +130,16 @@ func SetListBackupsFlagDefaults(flagSet *pflag.FlagSet) {
 	flagSet.Bool(VERBOSE, false, "Print verbose log messages")
 }
 
+// SetFindTableFlagDefaults is find-table's flag set: it only reads the history database and
+// local table-of-contents files, so it takes no deletion-related flags.
+func SetFindTableFlagDefaults(flagSet *pflag.FlagSet) {
+	flagSet.Bool(DEBUG, false, "Print verbose and debug log messages")
+	flagSet.String(FORMAT, "text", "Output format. Valid values are 'text', 'json'")
+	flagSet.Bool("help", false, "Help for find-table")
+	flagSet.Bool(QUIET, false, "Suppress non-warning, non-error log messages")
+	flagSet.Bool(VERBOSE, false, "Print verbose log messages")
+}
+
 func SetRestoreFlagDefaults(flagSet *pflag.FlagSet) {
 	flagSet.String(BACKUP_DIR, "", "The absolute path of the directory in which the backup files to be restored are located")
 	flagSet.Bool(CREATE_DB, false, "Create the database before metadata restore")

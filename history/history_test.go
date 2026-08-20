@@ -374,6 +374,29 @@ var _ = Describe("backup/history tests", func() {
 		})
 	})
 
+	Describe("GetAllBackupTimestamps", func() {
+		It("returns every stored timestamp, oldest first", func() {
+			db, _ := history.InitializeHistoryDatabase(historyDBPath)
+			defer db.Close()
+
+			older := history.BackupConfig{DatabaseName: "testdb1", RestorePlan: []history.RestorePlanEntry{}, Timestamp: "20260101000000"}
+			newer := history.BackupConfig{DatabaseName: "testdb1", RestorePlan: []history.RestorePlanEntry{}, Timestamp: "20260102000000"}
+			Expect(history.StoreBackupHistory(db, &newer)).To(Succeed())
+			Expect(history.StoreBackupHistory(db, &older)).To(Succeed())
+
+			timestamps, err := history.GetAllBackupTimestamps(db)
+			Expect(err).To(BeNil())
+			Expect(timestamps).To(Equal([]string{older.Timestamp, newer.Timestamp}))
+		})
+
+		It("returns nothing when no backups exist", func() {
+			db, _ := history.InitializeHistoryDatabase(historyDBPath)
+			defer db.Close()
+
+			Expect(history.GetAllBackupTimestamps(db)).To(BeEmpty())
+		})
+	})
+
 	Describe("SetDateDeleted", func() {
 		It("updates only the targeted backup's date_deleted", func() {
 			db, _ := history.InitializeHistoryDatabase(historyDBPath)
