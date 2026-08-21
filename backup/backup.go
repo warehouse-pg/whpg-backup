@@ -439,6 +439,7 @@ func DoTeardown() {
 				totalObjectCount += count
 			}
 			backupReport.BackupConfig.ObjectCount = totalObjectCount
+			backupReport.BackupConfig.ErrorMessage = errMsg
 
 			history.WriteConfigFile(&backupReport.BackupConfig, configFilename)
 			// We always want to override the initial end time set by the call to StoreBackupHistory

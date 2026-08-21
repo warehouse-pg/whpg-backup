@@ -49,57 +49,83 @@ func DoDisplayReport(timestamp string) {
 	configured := configuredFPInfo(fpInfo, *bc)
 	reportPath := configured.GetBackupReportFilePath()
 
-	if _, statErr := os.Stat(reportPath); statErr != nil {
-		if !os.IsNotExist(statErr) {
-			gplog.FatalOnError(statErr)
-		}
-		fetchPluginReportFile(bc, reportPath)
+	if fetchLocalCopyIfMissing(bc, reportPath) {
+		defer cleanupFetchedFile(reportPath)
 	}
 
 	contents, err := os.ReadFile(reportPath)
 	gplog.FatalOnError(err)
 
 	if format == "json" {
-		printReportJSON(*bc, reportPath, string(contents))
+		configPath := configured.GetConfigFilePath()
+		if fetchLocalCopyIfMissing(bc, configPath) {
+			defer cleanupFetchedFile(configPath)
+		}
+		cfg := history.ReadConfigFile(configPath)
+
+		printReportJSON(*bc, cfg, reportPath, string(contents))
 	} else {
 		fmt.Print(string(contents))
 	}
 }
 
-// fetchPluginReportFile pulls a plugin-backed backup's report file down to reportPath, since a
-// plugin backup's local copy may have been cleaned up after upload. Fatal if the backup used a
+// fetchLocalCopyIfMissing fetches path from the backup's plugin if it isn't already present
+// locally, reporting whether a fetch happened. A plugin-backed backup's local copies may have
+// been cleaned up after upload.
+func fetchLocalCopyIfMissing(bc *history.BackupConfig, path string) bool {
+	if _, statErr := os.Stat(path); statErr == nil {
+		return false
+	} else if !os.IsNotExist(statErr) {
+		gplog.FatalOnError(statErr)
+	}
+	fetchPluginFile(bc, path)
+	return true
+}
+
+// cleanupFetchedFile removes a file this invocation fetched from a plugin, so display-report
+// doesn't leave a permanent local copy behind. Callers defer this right after a successful fetch;
+// gplog.Fatal/FatalOnError panics rather than exiting, so it still runs if a later step fails.
+func cleanupFetchedFile(path string) {
+	if rmErr := os.Remove(path); rmErr != nil {
+		gplog.Warn("Unable to remove temporarily fetched file %s: %v", path, rmErr)
+	}
+}
+
+// fetchPluginFile pulls a plugin-backed backup's file down to path. Fatal if the backup used a
 // plugin but no --plugin-config was given to locate it, or if the backup used no plugin at all
 // and the local file is simply missing.
-func fetchPluginReportFile(bc *history.BackupConfig, reportPath string) {
+func fetchPluginFile(bc *history.BackupConfig, path string) {
 	if bc.Plugin == "" {
-		gplog.Fatal(errors.Errorf("Backup report file not found at %s", reportPath), "")
+		gplog.Fatal(errors.Errorf("Backup file not found at %s", path), "")
 	}
 
 	pluginConfigPath := MustGetFlagString(options.PLUGIN_CONFIG)
 	if pluginConfigPath == "" {
 		gplog.Fatal(errors.Errorf(
-			"Backup %s was created with plugin %s; pass --plugin-config to retrieve its report",
+			"Backup %s was created with plugin %s; pass --plugin-config to retrieve its files",
 			bc.Timestamp, bc.Plugin), "")
 	}
 
 	pluginConfig, err := utils.ReadPluginConfig(pluginConfigPath)
 	gplog.FatalOnError(err)
 	pluginConfig.ConfigPath = pluginConfigPath
-	pluginConfig.MustRestoreFile(reportPath)
+	pluginConfig.MustRestoreFile(path)
 }
 
-func printReportJSON(bc history.BackupConfig, reportPath string, reportText string) {
+func printReportJSON(bc history.BackupConfig, cfg *history.BackupConfig, reportPath string, reportText string) {
 	fields, objectCounts := parseReportText(reportText)
 
-	entry := make(map[string]interface{}, len(fields)+5)
-	for k, v := range fields {
-		entry[k] = v
+	// bc (history db) and fields (parsed report text) can disagree, so they're kept in separate
+	// namespaces rather than flattened into one map.
+	entry := map[string]interface{}{
+		"timestamp":     bc.Timestamp,
+		"database":      bc.DatabaseName,
+		"status":        bc.Status,
+		"backup_error":  cfg.ErrorMessage,
+		"report_file":   reportPath,
+		"report_fields": fields,
+		"object_counts": objectCounts,
 	}
-	entry["timestamp"] = bc.Timestamp
-	entry["database"] = bc.DatabaseName
-	entry["status"] = bc.Status
-	entry["report_file"] = reportPath
-	entry["object_counts"] = objectCounts
 
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
@@ -108,20 +134,24 @@ func printReportJSON(bc history.BackupConfig, reportPath string, reportText stri
 
 // parseReportText splits a gpbackup report file's text into its "key: value" header fields and
 // its trailing "count of database objects in backup" section, keyed as snake_case for JSON. A
-// few header values (e.g. the incremental backup set's timestamps, or a multi-line backup error)
-// span multiple physical lines with no colon of their own; such a line is folded into the most
-// recently seen key. A blank line resets that tracking so an unrelated later line never attaches
-// to a stale key.
+// few header values (e.g. the incremental backup set's timestamps) span multiple physical lines
+// with no colon of their own; such a line is folded into the most recently seen key. A blank line
+// resets that tracking so an unrelated later line never attaches to a stale key.
+//
+// backup error is excluded: it can itself be multi-line and contain colons, so it and everything
+// up to the next blank line is skipped here; printReportJSON reads it from the config file instead.
 func parseReportText(text string) (map[string]string, map[string]int) {
 	fields := make(map[string]string)
 	objectCounts := make(map[string]int)
 
 	inObjectCounts := false
+	skippingBackupError := false
 	lastKey := ""
 	for _, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			lastKey = ""
+			skippingBackupError = false
 			continue
 		}
 		if strings.EqualFold(trimmed, "count of database objects in backup:") {
@@ -143,6 +173,10 @@ func parseReportText(text string) (map[string]string, map[string]int) {
 			continue
 		}
 
+		if skippingBackupError {
+			continue
+		}
+
 		idx := strings.Index(trimmed, ":")
 		if idx == -1 {
 			if lastKey != "" {
@@ -151,6 +185,11 @@ func parseReportText(text string) (map[string]string, map[string]int) {
 			continue
 		}
 		key := strings.ReplaceAll(strings.TrimSpace(trimmed[:idx]), " ", "_")
+		if key == "backup_error" {
+			skippingBackupError = true
+			lastKey = ""
+			continue
+		}
 		value := strings.TrimSpace(trimmed[idx+1:])
 		fields[key] = value
 		lastKey = key

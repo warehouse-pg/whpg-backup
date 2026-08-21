@@ -76,6 +76,7 @@ type BackupConfig struct {
 	SingleBackupDir       bool
 	CommandLine           string
 	ObjectCount           int
+	ErrorMessage          string
 }
 
 func (backup *BackupConfig) Failed() bool {
