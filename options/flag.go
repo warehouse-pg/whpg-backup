@@ -140,6 +140,19 @@ func SetFindTableFlagDefaults(flagSet *pflag.FlagSet) {
 	flagSet.Bool(VERBOSE, false, "Print verbose log messages")
 }
 
+// SetDisplayReportFlagDefaults is SetListBackupsFlagDefaults minus --show-all (it looks up one
+// backup, not a list) plus --plugin-config: the report file for a plugin-backed backup may no
+// longer exist on local disk, so display-report needs the plugin config to pull it back, the
+// same way delete-backup does for its plugin backups.
+func SetDisplayReportFlagDefaults(flagSet *pflag.FlagSet) {
+	flagSet.Bool(DEBUG, false, "Print verbose and debug log messages")
+	flagSet.String(FORMAT, "text", "Output format. Valid values are 'text', 'json'")
+	flagSet.Bool("help", false, "Help for display-report")
+	flagSet.String(PLUGIN_CONFIG, "", "The configuration file to use for a plugin, needed to retrieve the report for a plugin-backed backup")
+	flagSet.Bool(QUIET, false, "Suppress non-warning, non-error log messages")
+	flagSet.Bool(VERBOSE, false, "Print verbose log messages")
+}
+
 func SetRestoreFlagDefaults(flagSet *pflag.FlagSet) {
 	flagSet.String(BACKUP_DIR, "", "The absolute path of the directory in which the backup files to be restored are located")
 	flagSet.Bool(CREATE_DB, false, "Create the database before metadata restore")

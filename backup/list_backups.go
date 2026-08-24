@@ -73,23 +73,29 @@ func DoListBackups() {
 	}
 }
 
-// actualBackupDir resolves the on-disk backup directory for b. BackupConfig.BackupDir only
-// records a --backup-dir override; a backup taken without that flag leaves it empty and lives
-// under the coordinator data dir instead, so fall back to the same default-location formula
-// filepath.FilePathInfo.GetDirForContent uses.
-func actualBackupDir(fpInfo filepath.FilePathInfo, b history.BackupConfig) string {
+// configuredFPInfo returns a copy of fpInfo populated with b's timestamp, backup-dir, and
+// segment-prefix fields. BackupConfig.BackupDir only records a --backup-dir override; a backup
+// taken without that flag leaves it empty and lives under the coordinator data dir instead, so
+// this falls back to the same default-location formula filepath.FilePathInfo already uses. A
+// --backup-dir backup without --single-backup-dir stores its segment directories under a prefix
+// (e.g. "gpseg") that isn't recorded in history; discover it from disk, best-effort, so the
+// resolved path matches the real on-disk location.
+func configuredFPInfo(fpInfo filepath.FilePathInfo, b history.BackupConfig) filepath.FilePathInfo {
 	fpInfo.Timestamp = b.Timestamp
 	fpInfo.UserSpecifiedBackupDir = b.BackupDir
 	fpInfo.SingleBackupDir = b.SingleBackupDir
-	// A --backup-dir backup without --single-backup-dir stores its segment directories under a
-	// prefix (e.g. "gpseg") that isn't recorded in history; discover it from disk the same way
-	// delete-backup does, best-effort, so the printed path matches the real on-disk location.
 	if b.BackupDir != "" && !b.SingleBackupDir {
 		if segPrefix, _, err := filepath.ParseSegPrefix(b.BackupDir, b.Timestamp); err == nil {
 			fpInfo.UserSpecifiedSegPrefix = segPrefix
 		}
 	}
-	return fpInfo.GetDirForContent(-1)
+	return fpInfo
+}
+
+// actualBackupDir resolves the on-disk backup directory for b.
+func actualBackupDir(fpInfo filepath.FilePathInfo, b history.BackupConfig) string {
+	configured := configuredFPInfo(fpInfo, b)
+	return configured.GetDirForContent(-1)
 }
 
 func filterOutDeletedBackups(backups []history.BackupConfig) []history.BackupConfig {

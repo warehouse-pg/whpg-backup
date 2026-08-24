@@ -75,7 +75,18 @@ func main() {
 			UseCmdFlags(cmd.Flags())
 			DoFindTable(args[0])
 		}}
+
 	rootCmd.AddCommand(findTableCmd)
+	var displayReportCmd = &cobra.Command{
+		Use:   "display-report <timestamp>",
+		Short: "Display the backup report for a specified timestamp",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			defer DoDisplayReportTeardown()
+			UseCmdFlags(cmd.Flags())
+			DoDisplayReport(args[0])
+		}}
+	rootCmd.AddCommand(displayReportCmd)
 
 	rootCmd.SetArgs(options.HandleSingleDashes(os.Args[1:]))
 	DoInit(rootCmd)
@@ -83,6 +94,7 @@ func main() {
 	DoDeleteBackupsBeforeInit(deleteBackupsBeforeCmd)
 	DoListBackupsInit(listBackupsCmd)
 	DoFindTableInit(findTableCmd)
+	DoDisplayReportInit(displayReportCmd)
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(2)
 	}

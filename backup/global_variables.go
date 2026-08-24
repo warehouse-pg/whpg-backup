@@ -101,6 +101,13 @@ func RegisterFindTableFlags(flagSet *pflag.FlagSet) {
 	options.SetFindTableFlagDefaults(flagSet)
 }
 
+// RegisterDisplayReportFlags defines the display-report flag set without touching the shared
+// cmdFlags pointer, since that must keep pointing at whichever subcommand cobra actually
+// invokes; see UseCmdFlags.
+func RegisterDisplayReportFlags(flagSet *pflag.FlagSet) {
+	options.SetDisplayReportFlagDefaults(flagSet)
+}
+
 // UseCmdFlags points MustGetFlag* reads at the given (already-registered, already-parsed)
 // flag set. Call this at the start of a command's Run, after cobra has selected which
 // subcommand's flags actually hold the parsed values.
