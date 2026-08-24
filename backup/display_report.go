@@ -57,13 +57,7 @@ func DoDisplayReport(timestamp string) {
 	gplog.FatalOnError(err)
 
 	if format == "json" {
-		configPath := configured.GetConfigFilePath()
-		if fetchLocalCopyIfMissing(bc, configPath) {
-			defer cleanupFetchedFile(configPath)
-		}
-		cfg := history.ReadConfigFile(configPath)
-
-		printReportJSON(*bc, cfg, reportPath, string(contents))
+		printReportJSON(*bc, reportPath, string(contents))
 	} else {
 		fmt.Print(string(contents))
 	}
@@ -112,8 +106,8 @@ func fetchPluginFile(bc *history.BackupConfig, path string) {
 	pluginConfig.MustRestoreFile(path)
 }
 
-func printReportJSON(bc history.BackupConfig, cfg *history.BackupConfig, reportPath string, reportText string) {
-	fields, objectCounts := parseReportText(reportText)
+func printReportJSON(bc history.BackupConfig, reportPath string, reportText string) {
+	fields, objectCounts, backupError := parseReportText(reportText)
 
 	// bc (history db) and fields (parsed report text) can disagree, so they're kept in separate
 	// namespaces rather than flattened into one map.
@@ -121,7 +115,7 @@ func printReportJSON(bc history.BackupConfig, cfg *history.BackupConfig, reportP
 		"timestamp":     bc.Timestamp,
 		"database":      bc.DatabaseName,
 		"status":        bc.Status,
-		"backup_error":  cfg.ErrorMessage,
+		"backup_error":  backupError,
 		"report_file":   reportPath,
 		"report_fields": fields,
 		"object_counts": objectCounts,
@@ -138,20 +132,22 @@ func printReportJSON(bc history.BackupConfig, cfg *history.BackupConfig, reportP
 // with no colon of their own; such a line is folded into the most recently seen key. A blank line
 // resets that tracking so an unrelated later line never attaches to a stale key.
 //
-// backup error is excluded: it can itself be multi-line and contain colons, so it and everything
-// up to the next blank line is skipped here; printReportJSON reads it from the config file instead.
-func parseReportText(text string) (map[string]string, map[string]int) {
+// backup error is excluded from fields: it can itself be multi-line and contain colons, so
+// splitting it line-by-line like other fields would produce bogus keys. Its raw, unsplit text
+// (spanning to the next blank line) is returned separately instead.
+func parseReportText(text string) (map[string]string, map[string]int, string) {
 	fields := make(map[string]string)
 	objectCounts := make(map[string]int)
+	var backupErrorLines []string
 
 	inObjectCounts := false
-	skippingBackupError := false
+	inBackupError := false
 	lastKey := ""
 	for _, line := range strings.Split(text, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			lastKey = ""
-			skippingBackupError = false
+			inBackupError = false
 			continue
 		}
 		if strings.EqualFold(trimmed, "count of database objects in backup:") {
@@ -173,7 +169,8 @@ func parseReportText(text string) (map[string]string, map[string]int) {
 			continue
 		}
 
-		if skippingBackupError {
+		if inBackupError {
+			backupErrorLines = append(backupErrorLines, trimmed)
 			continue
 		}
 
@@ -186,8 +183,11 @@ func parseReportText(text string) (map[string]string, map[string]int) {
 		}
 		key := strings.ReplaceAll(strings.TrimSpace(trimmed[:idx]), " ", "_")
 		if key == "backup_error" {
-			skippingBackupError = true
+			inBackupError = true
 			lastKey = ""
+			if value := strings.TrimSpace(trimmed[idx+1:]); value != "" {
+				backupErrorLines = append(backupErrorLines, value)
+			}
 			continue
 		}
 		value := strings.TrimSpace(trimmed[idx+1:])
@@ -195,7 +195,7 @@ func parseReportText(text string) (map[string]string, map[string]int) {
 		lastKey = key
 	}
 
-	return fields, objectCounts
+	return fields, objectCounts, strings.Join(backupErrorLines, "\n")
 }
 
 // This function handles cleanup for the display-report subcommand. Unlike DoTeardown, there is

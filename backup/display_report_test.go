@@ -39,7 +39,7 @@ var _ = Describe("display-report internal tests", func() {
 				"tables                       2\n" +
 				"views                        0\n"
 
-			fields, objectCounts := parseReportText(text)
+			fields, objectCounts, _ := parseReportText(text)
 			Expect(fields).To(HaveKeyWithValue("timestamp_key", "20260101000000"))
 			Expect(fields).To(HaveKeyWithValue("whpg_version", "1.0.0"))
 			Expect(fields).To(HaveKeyWithValue("backup_status", "Success"))
@@ -49,24 +49,25 @@ var _ = Describe("display-report internal tests", func() {
 
 		It("keeps only the first colon so a value containing one is preserved", func() {
 			text := "command line:          gpbackup --dbname foo\n\ncount of database objects in backup:\ntables 1\n"
-			fields, _ := parseReportText(text)
+			fields, _, _ := parseReportText(text)
 			Expect(fields["command_line"]).To(Equal("gpbackup --dbname foo"))
 		})
 
-		It("skips the whole backup error section instead of splitting its own colons into bogus keys", func() {
+		It("keeps the backup error section out of fields, returning its raw unsplit text separately", func() {
 			text := "backup error:          could not dispatch to segment seg0\n" +
 				"connection refused: server closed\n\n" +
 				"database size:         81 MB\n\n" +
 				"count of database objects in backup:\ntables 1\n"
-			fields, _ := parseReportText(text)
+			fields, _, backupError := parseReportText(text)
 			Expect(fields).ToNot(HaveKey("backup_error"))
 			Expect(fields).ToNot(HaveKey("connection_refused"))
 			Expect(fields["database_size"]).To(Equal("81 MB"))
+			Expect(backupError).To(Equal("could not dispatch to segment seg0\nconnection refused: server closed"))
 		})
 
 		It("folds a colonless continuation line into the most recently seen key", func() {
 			text := "incremental backup set:\n20260101000000\n20260102000000\n\ncount of database objects in backup:\ntables 1\n"
-			fields, objectCounts := parseReportText(text)
+			fields, objectCounts, _ := parseReportText(text)
 			Expect(fields).ToNot(HaveKey("20260101000000"))
 			Expect(fields["incremental_backup_set"]).To(Equal("\n20260101000000\n20260102000000"))
 			Expect(objectCounts).To(HaveKeyWithValue("tables", 1))
@@ -74,7 +75,7 @@ var _ = Describe("display-report internal tests", func() {
 
 		It("resets the continuation key at a blank line so unrelated lines aren't merged", func() {
 			text := "backup status:         Success\n\ndatabase size:         81 MB\n\ncount of database objects in backup:\ntables 1\n"
-			fields, _ := parseReportText(text)
+			fields, _, _ := parseReportText(text)
 			Expect(fields["backup_status"]).To(Equal("Success"))
 			Expect(fields["database_size"]).To(Equal("81 MB"))
 		})
@@ -123,13 +124,8 @@ var _ = Describe("display-report internal tests", func() {
 
 		writeReportFile := func(contents string) {
 			reportPath := filepath.Join(reportDir, "gpbackup_"+timestamp+"_report")
+			_ = os.Remove(reportPath) // report files are written read-only; clear any prior write first
 			Expect(os.WriteFile(reportPath, []byte(contents), 0444)).To(Succeed())
-		}
-
-		writeConfigFile := func(config history.BackupConfig) {
-			configPath := filepath.Join(reportDir, "gpbackup_"+timestamp+"_config.yaml")
-			_ = os.Remove(configPath) // WriteConfigFile makes the file read-only; clear any prior write first
-			history.WriteConfigFile(&config, configPath)
 		}
 
 		newConfig := func() history.BackupConfig {
@@ -229,7 +225,7 @@ esac
 				Expect(statErr).ToNot(HaveOccurred())
 			})
 
-			It("also fetches the config file via the plugin for --format=json, and removes it afterward too", func() {
+			It("does not fetch a config file via the plugin for --format=json, since backup_error comes from the report", func() {
 				config := newConfig()
 				config.Plugin = "some_plugin"
 				storeBackup(config)
@@ -259,7 +255,6 @@ esac
 			BeforeEach(func() {
 				writeReportFile(reportTxt)
 				storeBackup(newConfig())
-				writeConfigFile(newConfig())
 			})
 
 			It("prints the raw report file for --format=text (default)", func() {
@@ -287,10 +282,13 @@ esac
 				Expect(objectCounts["tables"]).To(Equal(float64(2)))
 			})
 
-			It("sources backup_error from the config file's ErrorMessage, unsplit, even when it's multi-line and contains colons", func() {
-				config := newConfig()
-				config.ErrorMessage = "could not dispatch to segment seg0\nconnection refused: server closed"
-				writeConfigFile(config)
+			It("sources backup_error from the report's own backup error section, unsplit, even when it contains colons", func() {
+				writeReportFile("Greenplum Database Backup Report\n\n" +
+					"timestamp key:         " + timestamp + "\n\n" +
+					"backup error:          could not dispatch to segment seg0\n" +
+					"connection refused: server closed\n\n" +
+					"count of database objects in backup:\n" +
+					"tables                       2\n")
 
 				useDisplayReportFlags(map[string]string{options.FORMAT: "json"})
 				output := captureStdout(func() { DoDisplayReport(timestamp) })
