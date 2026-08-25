@@ -90,9 +90,9 @@ func DoFindTable(tableFQN string) {
 	}
 
 	if format == "json" {
-		printBackupsListJSON(backups, fpInfo)
+		printBackupsListJSON(backups)
 	} else {
-		printBackupsList(backups, fpInfo)
+		printBackupsList(backups)
 	}
 }
 

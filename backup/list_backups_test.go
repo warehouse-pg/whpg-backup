@@ -143,7 +143,7 @@ var _ = Describe("list-backups internal tests", func() {
 		})
 
 		Context("--backup-dir", func() {
-			It("prints the real on-disk segment prefix, not a literal -1", func() {
+			It("prints the raw --backup-dir value the backup was taken with, not the resolved on-disk path", func() {
 				backupTimestamp := "20260202020202"
 				backupDir := GinkgoT().TempDir()
 				Expect(os.MkdirAll(filepath.Join(backupDir, "gpseg-1", "backups", "20260202", backupTimestamp), 0755)).To(Succeed())
@@ -170,7 +170,7 @@ var _ = Describe("list-backups internal tests", func() {
 				var entries []backupListEntry
 				Expect(json.Unmarshal([]byte(output), &entries)).To(Succeed())
 				Expect(entries).To(HaveLen(1))
-				Expect(entries[0].BackupDir).To(Equal(filepath.Join(backupDir, "gpseg-1", "backups", "20260202", backupTimestamp)))
+				Expect(entries[0].BackupDir).To(Equal(backupDir))
 			})
 		})
 

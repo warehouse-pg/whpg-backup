@@ -67,9 +67,9 @@ func DoListBackups() {
 	}
 
 	if format == "json" {
-		printBackupsListJSON(backups, fpInfo)
+		printBackupsListJSON(backups)
 	} else {
-		printBackupsList(backups, fpInfo)
+		printBackupsList(backups)
 	}
 }
 
@@ -92,12 +92,6 @@ func configuredFPInfo(fpInfo filepath.FilePathInfo, b history.BackupConfig) file
 	return fpInfo
 }
 
-// actualBackupDir resolves the on-disk backup directory for b.
-func actualBackupDir(fpInfo filepath.FilePathInfo, b history.BackupConfig) string {
-	configured := configuredFPInfo(fpInfo, b)
-	return configured.GetDirForContent(-1)
-}
-
 func filterOutDeletedBackups(backups []history.BackupConfig) []history.BackupConfig {
 	filtered := make([]history.BackupConfig, 0, len(backups))
 	for _, b := range backups {
@@ -108,7 +102,7 @@ func filterOutDeletedBackups(backups []history.BackupConfig) []history.BackupCon
 	return filtered
 }
 
-func printBackupsList(backups []history.BackupConfig, fpInfo filepath.FilePathInfo) {
+func printBackupsList(backups []history.BackupConfig) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 3, ' ', 0)
 	defer w.Flush()
 
@@ -118,7 +112,7 @@ func printBackupsList(backups []history.BackupConfig, fpInfo filepath.FilePathIn
 			b.Timestamp, formatHistoryTimestamp(b.Timestamp), b.Status, b.DatabaseName,
 			backupTypeString(b), objectFilteringString(b), b.Plugin,
 			backupDuration(b.Timestamp, b.EndTime), formatHistoryTimestamp(b.DateDeleted),
-			actualBackupDir(fpInfo, b), b.Compressed, b.CompressionType)
+			b.BackupDir, b.Compressed, b.CompressionType)
 	}
 }
 
@@ -137,7 +131,7 @@ type backupListEntry struct {
 	CompressionType string `json:"compression_type"`
 }
 
-func printBackupsListJSON(backups []history.BackupConfig, fpInfo filepath.FilePathInfo) {
+func printBackupsListJSON(backups []history.BackupConfig) {
 	entries := make([]backupListEntry, 0, len(backups))
 	for _, b := range backups {
 		entries = append(entries, backupListEntry{
@@ -150,7 +144,7 @@ func printBackupsListJSON(backups []history.BackupConfig, fpInfo filepath.FilePa
 			Plugin:          b.Plugin,
 			Duration:        backupDuration(b.Timestamp, b.EndTime),
 			DateDeleted:     formatHistoryTimestamp(b.DateDeleted),
-			BackupDir:       actualBackupDir(fpInfo, b),
+			BackupDir:       b.BackupDir,
 			Compressed:      b.Compressed,
 			CompressionType: b.CompressionType,
 		})
