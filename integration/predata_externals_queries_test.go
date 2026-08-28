@@ -30,11 +30,6 @@ FORMAT 'TEXT'`)
 				ExecLocation: "ALL_SEGMENTS", FormatType: "t", FormatOpts: "delimiter '	' null '\\N' escape '\\'",
 				Command: "", RejectLimit: 0, RejectLimitType: "", ErrTableName: "", ErrTableSchema: "", Encoding: "UTF8",
 				Writable: false, URIs: []string{"file://tmp/myfile.txt"}}
-			if connectionPool.Version.AtLeast("19") {
-				// WHPG19 no longer serializes the implicit default ESCAPE
-				// option when it isn't specified in the DDL.
-				extTable.FormatOpts = "delimiter '\t' null '\\N'"
-			}
 			structmatcher.ExpectStructsToMatchExcluding(&extTable, &result, "Oid")
 		})
 		It("returns a slice for a basic external web table definition", func() {
@@ -57,11 +52,6 @@ FORMAT 'TEXT'`)
 				// The query for GPDB 7+ will have a NULL value instead of ""
 				extTable.Location.Valid = false
 			}
-			if connectionPool.Version.AtLeast("19") {
-				// WHPG19 no longer serializes the implicit default ESCAPE
-				// option when it isn't specified in the DDL.
-				extTable.FormatOpts = "delimiter '\t' null '\\N'"
-			}
 
 			structmatcher.ExpectStructsToMatchExcluding(&extTable, &result, "Oid")
 		})
@@ -82,11 +72,6 @@ SEGMENT REJECT LIMIT 10 PERCENT
 				ExecLocation: "ALL_SEGMENTS", FormatType: "t", FormatOpts: "delimiter '	' null '\\N' escape '\\'",
 				Command: "", RejectLimit: 10, RejectLimitType: "p", LogErrors: true, Encoding: "UTF8",
 				Writable: false, URIs: []string{"file://tmp/myfile.txt"}}
-			if connectionPool.Version.AtLeast("19") {
-				// WHPG19 no longer serializes the implicit default ESCAPE
-				// option when it isn't specified in the DDL.
-				extTable.FormatOpts = "delimiter '\t' null '\\N'"
-			}
 
 			structmatcher.ExpectStructsToMatchExcluding(&extTable, &result, "Oid")
 		})
