@@ -163,13 +163,14 @@ func InitializeBackupConfig() {
 }
 
 func BackupConfigurationValidation() {
-	// This must run first: every check below reads the backup files from local
-	// disk, which is only where they live when no plugin was used.
+	// This must run first: with no plugin in effect the checks below assume the
+	// backup files are on local disk, and would report a missing directory or
+	// file instead of the missing --plugin-config flag.
 	ValidateBackupFlagPluginCombinations()
 
 	if !backupConfig.MetadataOnly {
 		gplog.Verbose("Gathering information on backup directories")
-		VerifyBackupDirectoriesExistOnAllHosts()
+		EnsureBackupDirectoriesExistOnAllHosts()
 	}
 
 	VerifyMetadataFilePaths(MustGetFlagBool(options.WITH_STATS))
