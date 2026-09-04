@@ -117,6 +117,7 @@ func DoDeleteBackupInit(cmd *cobra.Command) {
 
 func DoDeleteBackup(timestamp string) {
 	SetLoggerVerbosity()
+	ValidatePluginConfigFlag()
 
 	if !filepath.IsValidTimestamp(timestamp) {
 		gplog.Fatal(errors.Errorf("Invalid timestamp: %s", timestamp), "")

@@ -164,14 +164,26 @@ func validateFlagCombinations(flags *pflag.FlagSet) {
 	}
 }
 
-func validateFlagValues() {
-	// ValidateFullPath accepts the empty string and DoSetup treats an empty
-	// plugin config as "no plugin", so an unset or mistyped shell variable would
-	// otherwise silently produce a local-disk backup instead of one on the
-	// plugin's storage.
+/*
+ * ValidatePluginConfigFlag rejects --plugin-config given with an empty value.
+ * ValidateFullPath accepts the empty string and every command that takes this
+ * flag treats an empty plugin config as "no plugin at all", so an unset or
+ * mistyped shell variable would otherwise silently write the backup to local
+ * disk instead of to the plugin's storage -- which can fill up the segment
+ * hosts -- or delete only the local half of a backup set.
+ *
+ * Call this from any command that registers --plugin-config: gpbackup itself
+ * (via validateFlagValues), delete-backup and delete-backups-before.  It must
+ * run after UseCmdFlags has pointed cmdFlags at the subcommand's flag set.
+ */
+func ValidatePluginConfigFlag() {
 	if FlagChanged(options.PLUGIN_CONFIG) && MustGetFlagString(options.PLUGIN_CONFIG) == "" {
-		gplog.Fatal(errors.Errorf("The --plugin-config flag was specified with an empty value. Specify the absolute path to the plugin configuration file, or omit the flag to back up to local disk."), "")
+		gplog.Fatal(errors.Errorf("The --plugin-config flag was specified with an empty value. Specify the absolute path to the plugin configuration file, or omit the flag to use local storage."), "")
 	}
+}
+
+func validateFlagValues() {
+	ValidatePluginConfigFlag()
 	err := utils.ValidateFullPath(MustGetFlagString(options.BACKUP_DIR))
 	gplog.FatalOnError(err)
 	err = utils.ValidateFullPath(MustGetFlagString(options.PLUGIN_CONFIG))
