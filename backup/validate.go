@@ -165,6 +165,13 @@ func validateFlagCombinations(flags *pflag.FlagSet) {
 }
 
 func validateFlagValues() {
+	// ValidateFullPath accepts the empty string and DoSetup treats an empty
+	// plugin config as "no plugin", so an unset or mistyped shell variable would
+	// otherwise silently produce a local-disk backup instead of one on the
+	// plugin's storage.
+	if FlagChanged(options.PLUGIN_CONFIG) && MustGetFlagString(options.PLUGIN_CONFIG) == "" {
+		gplog.Fatal(errors.Errorf("The --plugin-config flag was specified with an empty value. Specify the absolute path to the plugin configuration file, or omit the flag to back up to local disk."), "")
+	}
 	err := utils.ValidateFullPath(MustGetFlagString(options.BACKUP_DIR))
 	gplog.FatalOnError(err)
 	err = utils.ValidateFullPath(MustGetFlagString(options.PLUGIN_CONFIG))

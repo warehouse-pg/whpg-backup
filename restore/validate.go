@@ -282,10 +282,29 @@ func ValidateBackupFlagCombinations() {
 	if !backupConfig.SingleDataFile && FlagChanged(options.COPY_QUEUE_SIZE) {
 		gplog.Fatal(errors.Errorf("The --copy-queue-size flag can only be used if the backup was taken with --single-data-file"), "")
 	}
-	validateBackupFlagPluginCombinations()
 }
 
-func validateBackupFlagPluginCombinations() {
+/*
+ * ValidatePluginConfigFlag rejects --plugin-config given with an empty value.
+ * ValidateFullPath accepts the empty string, and DoSetup treats an empty plugin
+ * config as "no plugin at all", so without this check an unset or mistyped shell
+ * variable silently downgrades a plugin restore to a local-filesystem restore
+ * and then fails on the first backup file that is not on local disk.
+ */
+func ValidatePluginConfigFlag() {
+	if FlagChanged(options.PLUGIN_CONFIG) && MustGetFlagString(options.PLUGIN_CONFIG) == "" {
+		gplog.Fatal(errors.Errorf("The --plugin-config flag was specified with an empty value. Specify the absolute path to the plugin configuration file, or omit the flag to restore from local disk."), "")
+	}
+}
+
+/*
+ * ValidateBackupFlagPluginCombinations must be called before any check that
+ * assumes the backup files are on local disk.  A backup taken with a plugin
+ * stores its files on the plugin's storage, so if the plugin is missing here the
+ * useful error is "the --plugin-config flag must be used", not a report of a
+ * missing local directory or file.
+ */
+func ValidateBackupFlagPluginCombinations() {
 	if MustGetFlagBool(options.IGNORE_PLUGIN_CONFIG) {
 		// No-op against a backup taken without a plugin; the flag just means
 		// "do not invoke any plugin during restore", which is already the

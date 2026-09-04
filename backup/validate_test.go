@@ -215,6 +215,8 @@ var _ = Describe("backup/validate tests", func() {
 				}
 			},
 			Entry("--backup-dir combo", "--backup-dir /tmp --plugin-config /tmp/config", false),
+			Entry("--plugin-config with an empty value", "--plugin-config ", false),
+			Entry("--plugin-config with a path", "--plugin-config /tmp/config", true),
 
 			/*
 			 * Below are all the different filter combinations

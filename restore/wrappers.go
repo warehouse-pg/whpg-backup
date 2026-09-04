@@ -163,6 +163,10 @@ func InitializeBackupConfig() {
 }
 
 func BackupConfigurationValidation() {
+	// This must run first: every check below reads the backup files from local
+	// disk, which is only where they live when no plugin was used.
+	ValidateBackupFlagPluginCombinations()
+
 	if !backupConfig.MetadataOnly {
 		gplog.Verbose("Gathering information on backup directories")
 		VerifyBackupDirectoriesExistOnAllHosts()
