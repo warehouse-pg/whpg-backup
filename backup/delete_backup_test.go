@@ -11,6 +11,7 @@ import (
 
 	"github.com/greenplum-db/gpbackup/history"
 	"github.com/greenplum-db/gpbackup/utils"
+	"github.com/spf13/cobra"
 	"github.com/warehouse-pg/common-go-libs/cluster"
 	"github.com/warehouse-pg/common-go-libs/testhelper"
 
@@ -439,6 +440,38 @@ var _ = Describe("delete-backup internal tests", func() {
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("20260101000000"))
 			Expect(err.Error()).To(ContainSubstring("not created with a plugin"))
+		})
+	})
+
+	Describe("ValidatePluginConfigFlag", func() {
+		// delete-backup and delete-backups-before never run DoFlagValidation, so
+		// they call this guard themselves; exercise it through their own flag set.
+		runWithArgs := func(args []string) error {
+			testCmd := &cobra.Command{
+				Use:  "delete-backup",
+				Args: cobra.NoArgs,
+				Run: func(cmd *cobra.Command, _ []string) {
+					UseCmdFlags(cmd.Flags())
+					ValidatePluginConfigFlag()
+				}}
+			RegisterDeleteBackupFlags(testCmd.Flags())
+			testCmd.SetArgs(args)
+			return testCmd.Execute()
+		}
+
+		It("fails when --plugin-config is specified with an empty value", func() {
+			defer testhelper.ShouldPanicWithMessage("The --plugin-config flag was specified with an empty value")
+			if err := runWithArgs([]string{"--plugin-config", ""}); err == nil {
+				Fail("empty --plugin-config value passed validation check")
+			}
+		})
+
+		It("passes when --plugin-config is specified with a path", func() {
+			Expect(runWithArgs([]string{"--plugin-config", "/etc/ddboost_config.yaml"})).To(Succeed())
+		})
+
+		It("passes when --plugin-config is not specified", func() {
+			Expect(runWithArgs([]string{})).To(Succeed())
 		})
 	})
 

@@ -17,25 +17,54 @@ import (
  * Functions to run commands on entire cluster during restore
  */
 
-func VerifyBackupDirectoriesExistOnAllHosts() {
-	_, err := globalCluster.ExecuteLocalCommand(fmt.Sprintf("test -d %s", globalFPInfo.GetDirForContent(-1)))
-	gplog.FatalOnError(err, "Backup directory %s missing or inaccessible", globalFPInfo.GetDirForContent(-1))
-	if MustGetFlagString(options.PLUGIN_CONFIG) == "" || backupConfig.SingleDataFile {
-		origSize, destSize, isResizeRestore, _ := GetResizeClusterInfo()
+/*
+ * EnsureBackupDirectoriesExistOnAllHosts checks, or creates, the backup
+ * directories the restore is about to use.
+ *
+ * Without a plugin those directories hold the backup itself, so a missing one
+ * means the data is gone and the restore must stop.  With a plugin the backup
+ * lives on the plugin's storage and the local directories are only staging
+ * areas for files gprestore downloads into them, so they are created here
+ * instead of being required.  That is what lets a backup be restored onto a
+ * host that was rebuilt or replaced after the backup was taken, without having
+ * to reconstruct the old directory tree by hand first.
+ */
+func EnsureBackupDirectoriesExistOnAllHosts() {
+	usingPlugin := MustGetFlagString(options.PLUGIN_CONFIG) != ""
 
-		remoteOutput := globalCluster.GenerateAndExecuteCommand("Verifying backup directories exist", cluster.ON_SEGMENTS, func(contentID int) string {
-			if isResizeRestore { // Map origin content to destination content to find where the original files have been placed
-				if contentID >= origSize { // Don't check for directories for contents that aren't part of the backup set
-					return ""
-				}
-				contentID = contentID % destSize
-			}
-			return fmt.Sprintf("test -d %s", globalFPInfo.GetDirForContent(contentID))
-		})
-		globalCluster.CheckClusterError(remoteOutput, "Backup directories missing or inaccessible", func(contentID int) string {
-			return fmt.Sprintf("Backup directory %s missing or inaccessible", globalFPInfo.GetDirForContent(contentID))
-		})
+	coordinatorDir := globalFPInfo.GetDirForContent(-1)
+	if usingPlugin {
+		_, err := globalCluster.ExecuteLocalCommand(fmt.Sprintf("mkdir -p %s", coordinatorDir))
+		gplog.FatalOnError(err, "Unable to create backup directory %s", coordinatorDir)
+	} else {
+		_, err := globalCluster.ExecuteLocalCommand(fmt.Sprintf("test -d %s", coordinatorDir))
+		gplog.FatalOnError(err, "Backup directory %s missing or inaccessible", coordinatorDir)
 	}
+
+	// The segment directories are needed for every plugin restore, not just the
+	// single-data-file ones: a resize restore stages the helper's pipes, oid
+	// files and segment TOCs there as well.
+	dirCommand, verboseMsg, errMsg := "test -d", "Verifying backup directories exist", "Backup directories missing or inaccessible"
+	if usingPlugin {
+		dirCommand, verboseMsg, errMsg = "mkdir -p", "Creating backup directories", "Unable to create backup directories"
+	}
+	origSize, destSize, isResizeRestore, _ := GetResizeClusterInfo()
+
+	remoteOutput := globalCluster.GenerateAndExecuteCommand(verboseMsg, cluster.ON_SEGMENTS, func(contentID int) string {
+		if isResizeRestore { // Map origin content to destination content to find where the original files have been placed
+			if contentID >= origSize { // Don't check for directories for contents that aren't part of the backup set
+				return ""
+			}
+			contentID = contentID % destSize
+		}
+		return fmt.Sprintf("%s %s", dirCommand, globalFPInfo.GetDirForContent(contentID))
+	})
+	globalCluster.CheckClusterError(remoteOutput, errMsg, func(contentID int) string {
+		if usingPlugin {
+			return fmt.Sprintf("Unable to create backup directory %s", globalFPInfo.GetDirForContent(contentID))
+		}
+		return fmt.Sprintf("Backup directory %s missing or inaccessible", globalFPInfo.GetDirForContent(contentID))
+	})
 }
 
 func VerifyBackupFileCountOnSegments() {

@@ -421,7 +421,7 @@ var _ = Describe("restore/validate tests", func() {
 				Use:  "flag validation",
 				Args: cobra.NoArgs,
 				Run: func(cmd *cobra.Command, args []string) {
-					restore.ValidateBackupFlagCombinations()
+					restore.ValidateBackupFlagPluginCombinations()
 				}}
 			testCmd.SetArgs([]string{"--ignore-plugin-config"})
 			restore.SetCmdFlags(testCmd.Flags())
@@ -435,9 +435,70 @@ var _ = Describe("restore/validate tests", func() {
 				Use:  "flag validation",
 				Args: cobra.NoArgs,
 				Run: func(cmd *cobra.Command, args []string) {
-					restore.ValidateBackupFlagCombinations()
+					restore.ValidateBackupFlagPluginCombinations()
 				}}
 			testCmd.SetArgs([]string{"--ignore-plugin-config"})
+			restore.SetCmdFlags(testCmd.Flags())
+
+			err := testCmd.Execute()
+			Expect(err).ToNot(HaveOccurred())
+		})
+		It("should fatal when the backup was taken with a plugin but no plugin config is given", func() {
+			restore.SetBackupConfig(&history.BackupConfig{Plugin: "/tmp/gpbackup_fake_plugin"})
+			testCmd := &cobra.Command{
+				Use:  "flag validation",
+				Args: cobra.NoArgs,
+				Run: func(cmd *cobra.Command, args []string) {
+					restore.ValidateBackupFlagPluginCombinations()
+				}}
+			testCmd.SetArgs([]string{})
+			restore.SetCmdFlags(testCmd.Flags())
+
+			defer testhelper.ShouldPanicWithMessage("The --plugin-config flag must be used to restore")
+			err := testCmd.Execute()
+			if err == nil {
+				Fail("restore of a plugin backup without --plugin-config passed validation check")
+			}
+		})
+	})
+	Describe("ValidatePluginConfigFlag", func() {
+		It("should fatal when --plugin-config is specified with an empty value", func() {
+			testCmd := &cobra.Command{
+				Use:  "flag validation",
+				Args: cobra.NoArgs,
+				Run: func(cmd *cobra.Command, args []string) {
+					restore.ValidatePluginConfigFlag()
+				}}
+			testCmd.SetArgs([]string{"--plugin-config", ""})
+			restore.SetCmdFlags(testCmd.Flags())
+
+			defer testhelper.ShouldPanicWithMessage("The --plugin-config flag was specified with an empty value")
+			err := testCmd.Execute()
+			if err == nil {
+				Fail("empty --plugin-config value passed validation check")
+			}
+		})
+		It("should pass when --plugin-config is specified with a path", func() {
+			testCmd := &cobra.Command{
+				Use:  "flag validation",
+				Args: cobra.NoArgs,
+				Run: func(cmd *cobra.Command, args []string) {
+					restore.ValidatePluginConfigFlag()
+				}}
+			testCmd.SetArgs([]string{"--plugin-config", "/tmp/plugin_config.yaml"})
+			restore.SetCmdFlags(testCmd.Flags())
+
+			err := testCmd.Execute()
+			Expect(err).ToNot(HaveOccurred())
+		})
+		It("should pass when --plugin-config is not specified at all", func() {
+			testCmd := &cobra.Command{
+				Use:  "flag validation",
+				Args: cobra.NoArgs,
+				Run: func(cmd *cobra.Command, args []string) {
+					restore.ValidatePluginConfigFlag()
+				}}
+			testCmd.SetArgs([]string{})
 			restore.SetCmdFlags(testCmd.Flags())
 
 			err := testCmd.Execute()

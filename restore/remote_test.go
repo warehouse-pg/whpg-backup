@@ -117,4 +117,49 @@ var _ = Describe("restore/remote tests", func() {
 			restore.VerifyBackupFileCountOnSegments()
 		})
 	})
+	Describe("EnsureBackupDirectoriesExistOnAllHosts", func() {
+		BeforeEach(func() {
+			testExecutor.ClusterOutput = &cluster.RemoteOutput{NumErrors: 0}
+			testCluster.Executor = testExecutor
+			restore.SetCluster(testCluster)
+			restore.SetBackupConfig(&history.BackupConfig{SegmentCount: 2})
+		})
+		It("requires the directories to exist when no plugin is in use", func() {
+			restore.EnsureBackupDirectoriesExistOnAllHosts()
+
+			Expect(testExecutor.LocalCommands[0]).To(Equal("test -d /data/gpseg-1/backups/20170101/20170101010101"))
+			cc := testExecutor.ClusterCommands[0]
+			Expect(cc).To(HaveLen(2))
+			Expect(cc[0].CommandString).To(ContainSubstring("test -d /data/gpseg0/backups/20170101/20170101010101"))
+			Expect(cc[1].CommandString).To(ContainSubstring("test -d /data/gpseg1/backups/20170101/20170101010101"))
+		})
+		It("creates the directories when a plugin is in use", func() {
+			// With a plugin these directories only stage files downloaded from the
+			// plugin's storage, so a host rebuilt since the backup must not fail here.
+			cmdFlags.Set(options.PLUGIN_CONFIG, "/tmp/plugin_config.yaml")
+			restore.SetBackupConfig(&history.BackupConfig{SegmentCount: 2, SingleDataFile: true})
+
+			restore.EnsureBackupDirectoriesExistOnAllHosts()
+
+			Expect(testExecutor.LocalCommands[0]).To(Equal("mkdir -p /data/gpseg-1/backups/20170101/20170101010101"))
+			cc := testExecutor.ClusterCommands[0]
+			Expect(cc).To(HaveLen(2))
+			Expect(cc[0].CommandString).To(ContainSubstring("mkdir -p /data/gpseg0/backups/20170101/20170101010101"))
+			Expect(cc[1].CommandString).To(ContainSubstring("mkdir -p /data/gpseg1/backups/20170101/20170101010101"))
+		})
+		It("creates the segment directories for a plugin backup taken without --single-data-file", func() {
+			// This combination used to skip the segments entirely, leaving the staging
+			// directory missing for the helper files a resize restore puts there.
+			cmdFlags.Set(options.PLUGIN_CONFIG, "/tmp/plugin_config.yaml")
+			restore.SetBackupConfig(&history.BackupConfig{SegmentCount: 2, SingleDataFile: false})
+
+			restore.EnsureBackupDirectoriesExistOnAllHosts()
+
+			Expect(testExecutor.NumClusterExecutions).To(Equal(1))
+			cc := testExecutor.ClusterCommands[0]
+			Expect(cc).To(HaveLen(2))
+			Expect(cc[0].CommandString).To(ContainSubstring("mkdir -p /data/gpseg0/backups/20170101/20170101010101"))
+			Expect(cc[1].CommandString).To(ContainSubstring("mkdir -p /data/gpseg1/backups/20170101/20170101010101"))
+		})
+	})
 })

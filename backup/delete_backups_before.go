@@ -29,6 +29,7 @@ func DoDeleteBackupsBeforeInit(cmd *cobra.Command) {
 // delete-backup --cascade.
 func DoDeleteBackupsBefore(cutoff string) {
 	SetLoggerVerbosity()
+	ValidatePluginConfigFlag()
 
 	if !filepath.IsValidTimestamp(cutoff) {
 		gplog.Fatal(errors.Errorf("Invalid timestamp: %s", cutoff), "")

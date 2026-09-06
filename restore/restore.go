@@ -39,6 +39,7 @@ func DoInit(cmd *cobra.Command) {
  */
 func DoValidation(cmd *cobra.Command) {
 	ValidateFlagCombinations(cmd)
+	ValidatePluginConfigFlag()
 	err := utils.ValidateFullPath(MustGetFlagString(options.BACKUP_DIR))
 	gplog.FatalOnError(err)
 	err = utils.ValidateFullPath(MustGetFlagString(options.PLUGIN_CONFIG))
@@ -93,8 +94,10 @@ func DoSetup() {
 
 	// Get restore metadata from plugin
 	if MustGetFlagString(options.PLUGIN_CONFIG) != "" {
+		gplog.Info("Restoring metadata files using plugin config %s", MustGetFlagString(options.PLUGIN_CONFIG))
 		RecoverMetadataFilesUsingPlugin()
 	} else {
+		gplog.Info("No plugin configured; expecting all backup files on local disk under %s", globalFPInfo.GetDirForContent(-1))
 		InitializeBackupConfig()
 	}
 
