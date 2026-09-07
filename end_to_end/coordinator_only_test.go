@@ -75,7 +75,7 @@ func createCoordinatorOnlyTables(conn *dbconn.DBConn) {
 		"CREATE TABLE public.co_ao(a int, b text) WITH (appendonly=true, orientation=row) DISTRIBUTED COORDINATOR ONLY;")
 	for _, tableName := range []string{"public.co_heap", "public.co_ao"} {
 		testhelper.AssertQueryRuns(conn, fmt.Sprintf(
-			"INSERT INTO %s SELECT i, 'row'||i FROM generate_series(1, %d) i;",
+			"INSERT INTO %s SELECT i, format('row%%s', i) FROM generate_series(1, %d) i;",
 			tableName, coordinatorOnlyRowCount))
 	}
 	testhelper.AssertQueryRuns(conn, "ANALYZE public.co_heap; ANALYZE public.co_ao;")
@@ -189,10 +189,11 @@ var _ = Describe("coordinator-only table end to end tests", func() {
 
 		assertCoordinatorOnlyInTOC(backupDir, timestamp, coordinatorOnlyTables)
 
+		// gprestore takes no --single-data-file: it reads that from the
+		// backup's own config.
 		gprestore(gprestorePath, restoreHelperPath, timestamp,
 			"--redirect-db", "restoredb",
-			"--backup-dir", backupDir,
-			"--single-data-file")
+			"--backup-dir", backupDir)
 
 		assertCoordinatorOnlyDataRestored(restoreConn, coordinatorOnlyTables)
 	})
@@ -203,7 +204,7 @@ var _ = Describe("coordinator-only table end to end tests", func() {
 		defer backupConn.Exec("DROP TABLE IF EXISTS public.seg_t;")
 		defer restoreConn.Exec("DROP TABLE IF EXISTS public.seg_t;")
 		testhelper.AssertQueryRuns(backupConn, fmt.Sprintf(
-			"INSERT INTO public.seg_t SELECT i, 'row'||i FROM generate_series(1, %d) i;",
+			"INSERT INTO public.seg_t SELECT i, format('row%%s', i) FROM generate_series(1, %d) i;",
 			coordinatorOnlyRowCount))
 
 		output := gpbackup(gpbackupPath, backupHelperPath,
@@ -215,10 +216,11 @@ var _ = Describe("coordinator-only table end to end tests", func() {
 		timestamp := getBackupTimestamp(string(output))
 		Expect(timestamp).ToNot(BeEmpty())
 
+		// gprestore takes no --single-data-file: it reads that from the
+		// backup's own config.
 		gprestore(gprestorePath, restoreHelperPath, timestamp,
 			"--redirect-db", "restoredb",
-			"--backup-dir", backupDir,
-			"--single-data-file")
+			"--backup-dir", backupDir)
 
 		assertCoordinatorOnlyDataRestored(restoreConn, coordinatorOnlyTables)
 		assertDataRestored(restoreConn, map[string]int{"public.seg_t": coordinatorOnlyRowCount})
