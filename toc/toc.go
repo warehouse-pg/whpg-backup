@@ -36,6 +36,10 @@ type MetadataEntry struct {
 	Tier            []uint32
 }
 
+// CoordinatorOnlyPolicy is what pg_get_table_distributedby() returns for a
+// table whose heap lives only on the coordinator (WHPG 7.4 and later).
+const CoordinatorOnlyPolicy = "DISTRIBUTED COORDINATOR ONLY"
+
 type CoordinatorDataEntry struct {
 	Schema          string
 	Name            string
@@ -45,6 +49,12 @@ type CoordinatorDataEntry struct {
 	PartitionRoot   string
 	IsReplicated    bool
 	DistByEnum      bool
+	// IsCoordinatorOnly marks a DISTRIBUTED COORDINATOR ONLY table, whose data
+	// is written to and read from the coordinator's own backup directory with a
+	// plain COPY instead of COPY ... ON SEGMENT.  Backups taken before this
+	// field existed simply decode it as false, which is correct for them: no
+	// server that could produce such a table was supported at the time.
+	IsCoordinatorOnly bool
 }
 
 type SegmentDataEntry struct {
@@ -342,8 +352,17 @@ func (toc *TOC) AddMetadataEntry(section string, entry MetadataEntry, start, end
 }
 
 func (toc *TOC) AddCoordinatorDataEntry(schema string, name string, oid uint32, attributeString string, rowsCopied int64, PartitionRoot string, distPolicy string, distByEnum bool) {
-	isReplicated := strings.Contains(distPolicy, "REPLICATED")
-	toc.DataEntries = append(toc.DataEntries, CoordinatorDataEntry{schema, name, oid, attributeString, rowsCopied, PartitionRoot, isReplicated, distByEnum})
+	toc.DataEntries = append(toc.DataEntries, CoordinatorDataEntry{
+		Schema:            schema,
+		Name:              name,
+		Oid:               oid,
+		AttributeString:   attributeString,
+		RowsCopied:        rowsCopied,
+		PartitionRoot:     PartitionRoot,
+		IsReplicated:      strings.Contains(distPolicy, "REPLICATED"),
+		DistByEnum:        distByEnum,
+		IsCoordinatorOnly: distPolicy == CoordinatorOnlyPolicy,
+	})
 }
 
 func (toc *SegmentTOC) AddSegmentDataEntry(oid uint, startByte uint64, endByte uint64) {

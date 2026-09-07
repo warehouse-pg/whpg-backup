@@ -396,6 +396,11 @@ type DistPolicy struct {
 	Oid        uint32
 	Policy     string `db:"value"`
 	DistByEnum bool   `db:"distbyenum"`
+	// IsCoordinatorOnly is derived from Policy rather than selected, and marks a
+	// DISTRIBUTED COORDINATOR ONLY table (gp_distribution_policy.policytype =
+	// 'e', WHPG 7.4 and later).  The heap of such a table lives only on the
+	// coordinator, so its data cannot be moved with COPY ... ON SEGMENT.
+	IsCoordinatorOnly bool
 }
 
 func GetDistributionPolicies(connectionPool *dbconn.DBConn, relations interface{}) map[uint32]DistPolicy {
@@ -467,7 +472,13 @@ func GetDistributionPolicies(connectionPool *dbconn.DBConn, relations interface{
 	err := connectionPool.Select(&results, query)
 	gplog.FatalOnError(err)
 	resultMap := make(map[uint32]DistPolicy)
+	// Coordinator-only tables only exist on 7.4 and later; older servers can
+	// never produce this policy, so don't even look at the string there.
+	checkCoordinatorOnly := connectionPool.Version.AtLeast("7.4")
 	for _, result := range results {
+		if checkCoordinatorOnly && result.Policy == toc.CoordinatorOnlyPolicy {
+			result.IsCoordinatorOnly = true
+		}
 		resultMap[result.Oid] = result
 	}
 	return resultMap

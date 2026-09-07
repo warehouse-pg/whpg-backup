@@ -30,7 +30,7 @@ type entryInfo struct {
 	batch     int
 }
 
-func CopyTableIn(connectionPool *dbconn.DBConn, tableName string, tableAttributes string, destinationToRead string, singleDataFile bool, whichConn int) (int64, error) {
+func CopyTableIn(connectionPool *dbconn.DBConn, tableName string, tableAttributes string, destinationToRead string, singleDataFile bool, whichConn int, isCoordinatorOnly bool) (int64, error) {
 	if wasTerminated {
 		return -1, nil
 	}
@@ -40,7 +40,14 @@ func CopyTableIn(connectionPool *dbconn.DBConn, tableName string, tableAttribute
 	customPipeThroughCommand := utils.GetPipeThroughProgram().InputCommand
 	resizeCluster := MustGetFlagBool(options.RESIZE_CLUSTER)
 
-	if singleDataFile || resizeCluster {
+	/*
+	 * A coordinator-only table's data was written by the coordinator into a file
+	 * of its own, never into the segments' single data file, so it is always read
+	 * back straight from that file rather than through the restore helper's
+	 * pipes -- even for a --single-data-file or a resize restore.  That means the
+	 * COPY has to do its own decompression, and its own plugin fetch.
+	 */
+	if !isCoordinatorOnly && (singleDataFile || resizeCluster) {
 		//helper.go handles compression, so we don't want to set it here
 		customPipeThroughCommand = utils.DefaultPipeThroughProgram
 	} else if MustGetFlagString(options.PLUGIN_CONFIG) != "" {
@@ -53,7 +60,11 @@ func CopyTableIn(connectionPool *dbconn.DBConn, tableName string, tableAttribute
 		copyCommand = fmt.Sprintf("PROGRAM '%s %s | %s'", readFromDestinationCommand, destinationToRead, customPipeThroughCommand)
 	}
 
-	query := fmt.Sprintf("COPY %s%s FROM %s WITH CSV DELIMITER '%s' ON SEGMENT;", tableName, tableAttributes, copyCommand, tableDelim)
+	onSegmentClause := " ON SEGMENT"
+	if isCoordinatorOnly {
+		onSegmentClause = ""
+	}
+	query := fmt.Sprintf("COPY %s%s FROM %s WITH CSV DELIMITER '%s'%s;", tableName, tableAttributes, copyCommand, tableDelim, onSegmentClause)
 
 	if connectionPool.Version.AtLeast("7") {
 		utils.LogProgress(`Executing "%s" on coordinator`, query)
@@ -82,8 +93,10 @@ func CopyTableIn(connectionPool *dbconn.DBConn, tableName string, tableAttribute
 func restoreSingleBatchData(fpInfo *filepath.FilePathInfo, entry toc.CoordinatorDataEntry, batch int, tableName string, rowProcessedChan chan int64, whichConn int) error {
 	origSize, destSize, resizeCluster, batches := GetResizeClusterInfo()
 	var numRowsRestored int64
-	// We don't want duplicate data for replicated tables so only do one batch
-	if entry.IsReplicated {
+	// We don't want duplicate data for replicated tables so only do one batch.
+	// A coordinator-only table was likewise backed up as a single file on the
+	// coordinator, regardless of the original cluster's segment count.
+	if entry.IsReplicated || entry.IsCoordinatorOnly {
 		batches = 1
 	}
 
@@ -98,7 +111,12 @@ func restoreSingleBatchData(fpInfo *filepath.FilePathInfo, entry toc.Coordinator
 	}
 
 	destinationToRead := ""
-	if backupConfig.SingleDataFile || resizeCluster {
+	if entry.IsCoordinatorOnly {
+		// The COPY for a coordinator-only table runs without ON SEGMENT, so the
+		// server does not expand the <SEG_DATA_DIR>/<SEGID> placeholders for us.
+		// Resolve them against content -1, where the backup wrote the file.
+		destinationToRead = fpInfo.GetTableBackupFilePath(-1, entry.Oid, utils.GetPipeThroughProgram().Extension, false)
+	} else if backupConfig.SingleDataFile || resizeCluster {
 		destinationToRead = fmt.Sprintf("%s_%d_%d", fpInfo.GetSegmentPipePathForCopyCommand(), entry.Oid, batch)
 	} else {
 		destinationToRead = fpInfo.GetTableBackupFilePathForCopyCommand(entry.Oid, utils.GetPipeThroughProgram().Extension, backupConfig.SingleDataFile)
@@ -116,18 +134,19 @@ func restoreSingleBatchData(fpInfo *filepath.FilePathInfo, entry toc.Coordinator
 	// If this occurs we need to error out, as subsequent COPY statements
 	// will hang indefinitely waiting to read from pipes that the helper
 	// was expected to set up
-	if backupConfig.SingleDataFile {
+	if backupConfig.SingleDataFile && !entry.IsCoordinatorOnly {
 		agentErr := utils.CheckAgentErrorsOnSegments(globalCluster, globalFPInfo)
 		gplog.FatalOnError(agentErr)
 	}
 
-	partialRowsRestored, copyErr := CopyTableIn(connectionPool, tableName, entry.AttributeString, destinationToRead, backupConfig.SingleDataFile, whichConn)
+	partialRowsRestored, copyErr := CopyTableIn(connectionPool, tableName, entry.AttributeString, destinationToRead, backupConfig.SingleDataFile, whichConn, entry.IsCoordinatorOnly)
 	rowProcessedChan <- partialRowsRestored
 
 	if copyErr != nil {
 		gplog.Error("%s", copyErr.Error())
 		if MustGetFlagBool(options.ON_ERROR_CONTINUE) {
-			if connectionPool.Version.AtLeast("6") && backupConfig.SingleDataFile {
+			// A coordinator-only entry has no segment helper to inform.
+			if connectionPool.Version.AtLeast("6") && backupConfig.SingleDataFile && !entry.IsCoordinatorOnly {
 				// inform segment helpers to skip this entry
 				utils.CreateSkipFileOnSegments(entry.Oid, batch, tableName, globalCluster, globalFPInfo)
 			}
@@ -160,7 +179,7 @@ func restoreSingleBatchData(fpInfo *filepath.FilePathInfo, entry toc.Coordinator
 		return err
 	}
 
-	if resizeCluster || entry.DistByEnum {
+	if NeedsRedistribution(entry, resizeCluster) {
 		// replicated tables cannot be redistributed, so instead expand them if needed
 		if entry.IsReplicated && (origSize < destSize) {
 			err := ExpandReplicatedTable(origSize, tableName, whichConn)
@@ -178,6 +197,23 @@ func restoreSingleBatchData(fpInfo *filepath.FilePathInfo, entry toc.Coordinator
 	}
 
 	return nil
+}
+
+/*
+ * NeedsRedistribution reports whether a restored table's data has to be moved
+ * around the segments afterwards, either because the destination cluster has a
+ * different number of segments than the backup was taken on or because the
+ * table is distributed by an enum column, whose hashes COPY cannot reproduce.
+ *
+ * A coordinator-only table never does: its rows are all on the coordinator no
+ * matter how many segments either cluster has, and the server rejects both
+ * ALTER TABLE ... SET WITH (REORGANIZE=true) and EXPAND TABLE for it.
+ */
+func NeedsRedistribution(entry toc.CoordinatorDataEntry, resizeCluster bool) bool {
+	if entry.IsCoordinatorOnly {
+		return false
+	}
+	return resizeCluster || entry.DistByEnum
 }
 
 func ExpandReplicatedTable(origSize int, tableName string, whichConn int) error {
@@ -226,7 +262,20 @@ func restoreDataFromTimestamp(fpInfo filepath.FilePathInfo, dataEntries []toc.Co
 	rowProcessedChans := make(map[uint32]chan int64)
 
 	origSize, destSize, resizeCluster, batches := GetResizeClusterInfo()
-	if backupConfig.SingleDataFile || resizeCluster {
+	/*
+	 * Coordinator-only entries are read straight from the coordinator's backup
+	 * directory, so they must be left out of the oid list handed to the segment
+	 * helpers, which would otherwise wait forever on pipes that no COPY opens.
+	 * If the backup set contains nothing else there is no segment data to read
+	 * at all, so the helpers are not needed.
+	 */
+	numSegmentEntries := 0
+	for _, entry := range dataEntries {
+		if !entry.IsCoordinatorOnly {
+			numSegmentEntries++
+		}
+	}
+	if (backupConfig.SingleDataFile || resizeCluster) && numSegmentEntries > 0 {
 		msg := ""
 		if backupConfig.SingleDataFile {
 			msg += "single data file "
@@ -241,6 +290,12 @@ func restoreDataFromTimestamp(fpInfo filepath.FilePathInfo, dataEntries []toc.Co
 		// data loading so we assign the batches here.
 		oidList := make([]string, 0)
 		for _, entry := range dataEntries {
+			if entry.IsCoordinatorOnly {
+				entryList = append(entryList, entryInfo{dataEntry: entry, batch: 0})
+				rowProcessedChans[entry.Oid] = make(chan int64, 1)
+				continue
+			}
+
 			if entry.IsReplicated {
 				oidList = append(oidList, fmt.Sprintf("%d,0", entry.Oid))
 				entryList = append(entryList, entryInfo{dataEntry: entry, batch: 0})

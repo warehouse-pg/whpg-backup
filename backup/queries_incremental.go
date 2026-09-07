@@ -24,27 +24,38 @@ func GetAOIncrementalMetadata(connectionPool *dbconn.DBConn) map[string]toc.AOEn
 	return aoTableEntries
 }
 
+// aoSegTable identifies the AO segment table holding an AO table's modcount,
+// and whether the AO table it belongs to is coordinator-only, which determines
+// where that modcount has to be read from.
+type aoSegTable struct {
+	FQN               string
+	IsCoordinatorOnly bool
+}
+
 func getAllModCounts(connectionPool *dbconn.DBConn) map[string]int64 {
 	var segTableFQNs = getAOSegTableFQNs(connectionPool)
 	modCounts := make(map[string]int64)
-	for aoTableFQN, segTableFQN := range segTableFQNs {
-		modCounts[aoTableFQN] = getModCount(connectionPool, segTableFQN)
+	for aoTableFQN, segTable := range segTableFQNs {
+		modCounts[aoTableFQN] = getModCount(connectionPool, segTable)
 	}
 	return modCounts
 }
 
-func getAOSegTableFQNs(connectionPool *dbconn.DBConn) map[string]string {
+func getAOSegTableFQNs(connectionPool *dbconn.DBConn) map[string]aoSegTable {
 
 	before7Query := fmt.Sprintf(`
 		SELECT seg.aotablefqn,
-			'pg_aoseg.' || quote_ident(aoseg_c.relname) AS aosegtablefqn
+			'pg_aoseg.' || quote_ident(aoseg_c.relname) AS aosegtablefqn,
+			false AS iscoordinatoronly
 		FROM pg_class aoseg_c
 			JOIN (SELECT pg_ao.relid AS aooid,
 					pg_ao.segrelid,
-					aotables.aotablefqn
+					aotables.aotablefqn,
+					aotables.iscoordinatoronly
 				FROM pg_appendonly pg_ao
 					JOIN (SELECT c.oid,
-							quote_ident(n.nspname)|| '.' || quote_ident(c.relname) AS aotablefqn
+							quote_ident(n.nspname)|| '.' || quote_ident(c.relname) AS aotablefqn,
+							false AS iscoordinatoronly
 						FROM pg_class c
 							JOIN pg_namespace n ON c.relnamespace = n.oid
 						WHERE relstorage IN ( 'ao', 'co' )
@@ -52,19 +63,25 @@ func getAOSegTableFQNs(connectionPool *dbconn.DBConn) map[string]string {
 					) aotables ON pg_ao.relid = aotables.oid
 			) seg ON aoseg_c.oid = seg.segrelid`, relationAndSchemaFilterClause())
 
+	// A coordinator-only table's AO segment data lives on the coordinator, so
+	// its modcount has to be read locally rather than from the segments.
 	atLeast7Query := fmt.Sprintf(`
 		SELECT seg.aotablefqn,
-			'pg_aoseg.' || quote_ident(aoseg_c.relname) AS aosegtablefqn
+			'pg_aoseg.' || quote_ident(aoseg_c.relname) AS aosegtablefqn,
+			seg.iscoordinatoronly
 		FROM pg_class aoseg_c
 			JOIN (SELECT pg_ao.relid AS aooid,
 					pg_ao.segrelid,
-					aotables.aotablefqn
+					aotables.aotablefqn,
+					aotables.iscoordinatoronly
 				FROM pg_appendonly pg_ao
 					JOIN (SELECT c.oid,
-							quote_ident(n.nspname) || '.' || quote_ident(c.relname) AS aotablefqn
+							quote_ident(n.nspname) || '.' || quote_ident(c.relname) AS aotablefqn,
+							COALESCE(d.policytype = 'e', false) AS iscoordinatoronly
 						FROM pg_class c
 							JOIN pg_namespace n ON c.relnamespace = n.oid
 							JOIN pg_am a ON c.relam = a.oid
+							LEFT JOIN gp_distribution_policy d ON d.localoid = c.oid
 						WHERE a.amname in ('ao_row', 'ao_column')
 							AND %s
 					) aotables ON pg_ao.relid = aotables.oid
@@ -78,32 +95,39 @@ func getAOSegTableFQNs(connectionPool *dbconn.DBConn) map[string]string {
 	}
 
 	results := make([]struct {
-		AOTableFQN    string
-		AOSegTableFQN string
+		AOTableFQN        string
+		AOSegTableFQN     string
+		IsCoordinatorOnly bool
 	}, 0)
 	err := connectionPool.Select(&results, query)
 	gplog.FatalOnError(err)
-	resultMap := make(map[string]string)
+	resultMap := make(map[string]aoSegTable)
 	for _, result := range results {
-		resultMap[result.AOTableFQN] = result.AOSegTableFQN
+		resultMap[result.AOTableFQN] = aoSegTable{
+			FQN:               result.AOSegTableFQN,
+			IsCoordinatorOnly: result.IsCoordinatorOnly,
+		}
 	}
 	return resultMap
 }
 
-func getModCount(connectionPool *dbconn.DBConn, aosegtablefqn string) int64 {
+func getModCount(connectionPool *dbconn.DBConn, segTable aoSegTable) int64 {
 
-	before7Query := fmt.Sprintf(`SELECT COALESCE(pg_catalog.sum(modcount), 0) AS modcount FROM %s`,
-		aosegtablefqn)
+	localQuery := fmt.Sprintf(`SELECT COALESCE(pg_catalog.sum(modcount), 0) AS modcount FROM %s`,
+		segTable.FQN)
 
 	// In GPDB 7+, the coordinator no longer stores AO segment data so we must
 	// query the modcount from the segments. Unfortunately, this does give a
 	// false positive if a VACUUM FULL compaction happens on the AO table.
 	atLeast7Query := fmt.Sprintf(`SELECT COALESCE(pg_catalog.sum(modcount), 0) AS modcount FROM gp_dist_random('%s')`,
-		aosegtablefqn)
+		segTable.FQN)
 
 	query := ""
-	if connectionPool.Version.Before("7") {
-		query = before7Query
+	if connectionPool.Version.Before("7") || segTable.IsCoordinatorOnly {
+		// A coordinator-only table has no AO segment rows on the segments, so
+		// reading them there would report a modcount of 0 forever and every
+		// incremental backup would skip the table's changed data.
+		query = localQuery
 	} else {
 		query = atLeast7Query
 	}

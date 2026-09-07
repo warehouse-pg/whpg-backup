@@ -152,6 +152,57 @@ var _ = Describe("backup/data tests", func() {
 
 			Expect(err).ShouldNot(HaveOccurred())
 		})
+		It("will back up a coordinator-only table on the coordinator, without ON SEGMENT", func() {
+			utils.SetPipeThroughProgram(utils.PipeThroughProgram{Name: "gzip", OutputCommand: "gzip -c -8", InputCommand: "gzip -d -c", Extension: ".gz"})
+			coordinatorOnlyTable := backup.Table{
+				Relation: backup.Relation{SchemaOid: 2345, Oid: 3456, Schema: "public", Name: "foo"},
+				TableDefinition: backup.TableDefinition{DistPolicy: backup.DistPolicy{
+					Policy: toc.CoordinatorOnlyPolicy, IsCoordinatorOnly: true}},
+			}
+			execStr := regexp.QuoteMeta("COPY public.foo TO PROGRAM 'gzip -c -8 > gpseg-1/backups/20170101/20170101010101/gpbackup_-1_20170101010101_3456.gz' WITH CSV DELIMITER ',' IGNORE EXTERNAL PARTITIONS;")
+			mock.ExpectExec(execStr).WillReturnResult(sqlmock.NewResult(10, 0))
+			filename := "gpseg-1/backups/20170101/20170101010101/gpbackup_-1_20170101010101_3456.gz"
+
+			_, err := backup.CopyTableOut(connectionPool, coordinatorOnlyTable, filename, defaultConnNum)
+
+			Expect(err).ShouldNot(HaveOccurred())
+		})
+		It("will back up a coordinator-only table to its own file even with --single-data-file", func() {
+			// The coordinator has no helper writing the single data file, so the
+			// COPY must not be pointed at a segment pipe and must compress itself.
+			_ = cmdFlags.Set(options.SINGLE_DATA_FILE, "true")
+			utils.SetPipeThroughProgram(utils.PipeThroughProgram{Name: "gzip", OutputCommand: "gzip -c -8", InputCommand: "gzip -d -c", Extension: ".gz"})
+			coordinatorOnlyTable := backup.Table{
+				Relation: backup.Relation{SchemaOid: 2345, Oid: 3456, Schema: "public", Name: "foo"},
+				TableDefinition: backup.TableDefinition{DistPolicy: backup.DistPolicy{
+					Policy: toc.CoordinatorOnlyPolicy, IsCoordinatorOnly: true}},
+			}
+			execStr := regexp.QuoteMeta("COPY public.foo TO PROGRAM 'gzip -c -8 > gpseg-1/backups/20170101/20170101010101/gpbackup_-1_20170101010101_3456.gz' WITH CSV DELIMITER ',' IGNORE EXTERNAL PARTITIONS;")
+			mock.ExpectExec(execStr).WillReturnResult(sqlmock.NewResult(10, 0))
+			filename := "gpseg-1/backups/20170101/20170101010101/gpbackup_-1_20170101010101_3456.gz"
+
+			_, err := backup.CopyTableOut(connectionPool, coordinatorOnlyTable, filename, defaultConnNum)
+
+			Expect(err).ShouldNot(HaveOccurred())
+		})
+		It("will back up a coordinator-only table through a plugin", func() {
+			_ = cmdFlags.Set(options.PLUGIN_CONFIG, "/tmp/plugin_config")
+			pluginConfig := utils.PluginConfig{ExecutablePath: "/tmp/fake-plugin.sh", ConfigPath: "/tmp/plugin_config"}
+			backup.SetPluginConfig(&pluginConfig)
+			utils.SetPipeThroughProgram(utils.PipeThroughProgram{Name: "gzip", OutputCommand: "gzip -c -8", InputCommand: "gzip -d -c", Extension: ".gz"})
+			coordinatorOnlyTable := backup.Table{
+				Relation: backup.Relation{SchemaOid: 2345, Oid: 3456, Schema: "public", Name: "foo"},
+				TableDefinition: backup.TableDefinition{DistPolicy: backup.DistPolicy{
+					Policy: toc.CoordinatorOnlyPolicy, IsCoordinatorOnly: true}},
+			}
+			execStr := regexp.QuoteMeta("COPY public.foo TO PROGRAM 'gzip -c -8 | /tmp/fake-plugin.sh backup_data /tmp/plugin_config gpseg-1/backups/20170101/20170101010101/gpbackup_-1_20170101010101_3456' WITH CSV DELIMITER ',' IGNORE EXTERNAL PARTITIONS;")
+			mock.ExpectExec(execStr).WillReturnResult(sqlmock.NewResult(10, 0))
+			filename := "gpseg-1/backups/20170101/20170101010101/gpbackup_-1_20170101010101_3456"
+
+			_, err := backup.CopyTableOut(connectionPool, coordinatorOnlyTable, filename, defaultConnNum)
+
+			Expect(err).ShouldNot(HaveOccurred())
+		})
 		It("will back up an extension config dump table with a filter condition", func() {
 			utils.SetPipeThroughProgram(utils.PipeThroughProgram{Name: "gzip", OutputCommand: "gzip -c -8", InputCommand: "gzip -d -c", Extension: ".gz"})
 			filteredTable := backup.Table{
@@ -203,6 +254,21 @@ var _ = Describe("backup/data tests", func() {
 
 			backupFile := fmt.Sprintf("<SEG_DATA_DIR>/backups/20170101/20170101010101/gpbackup_<SEGID>_20170101010101_%d", testTable.Oid)
 			copyCmd := fmt.Sprintf(copyFmtStr, backupFile)
+			mock.ExpectExec(copyCmd).WillReturnResult(sqlmock.NewResult(0, 10))
+			err := backup.BackupSingleTableData(testTable, rowsCopiedMap, &counters, 0)
+
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(rowsCopiedMap[0]).To(Equal(int64(10)))
+			Expect(counters.NumRegTables).To(Equal(int64(1)))
+		})
+		It("backs up a coordinator-only table into the coordinator's backup directory", func() {
+			// Even with --single-data-file set, the destination is a resolved
+			// path under content -1, not a <SEG_DATA_DIR> segment pipe.
+			_ = cmdFlags.Set(options.SINGLE_DATA_FILE, "true")
+			testTable.DistPolicy = backup.DistPolicy{Policy: toc.CoordinatorOnlyPolicy, IsCoordinatorOnly: true}
+
+			backupFile := fmt.Sprintf("gpseg-1/backups/20170101/20170101010101/gpbackup_-1_20170101010101_%d", testTable.Oid)
+			copyCmd := fmt.Sprintf(copyFmtStr, regexp.QuoteMeta(backupFile))
 			mock.ExpectExec(copyCmd).WillReturnResult(sqlmock.NewResult(0, 10))
 			err := backup.BackupSingleTableData(testTable, rowsCopiedMap, &counters, 0)
 
