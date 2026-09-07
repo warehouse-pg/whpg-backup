@@ -158,20 +158,5 @@ var _ = Describe("backup internal tests", func() {
 			Expect(changed[1].Name).To(Equal("dropped"))
 			Expect(changed[2].Name).To(Equal("parted_1_prt_1"))
 		})
-		It("queries the locked tables in batches", func() {
-			many := make([]backup.Relation, 0, 1001)
-			for oid := uint32(1); oid <= 1001; oid++ {
-				many = append(many, backup.Relation{SchemaOid: 2200, Oid: oid, Schema: "public", Name: fmt.Sprintf("t%d", oid)})
-			}
-			firstBatch := sqlmock.NewRows(header).AddRow(1, nil, "public", "t1", 1, 1)
-			secondBatch := sqlmock.NewRows(header).AddRow(1001, nil, "public", "t1001", 1001, 9999)
-			mock.ExpectQuery(`WITH RECURSIVE (.*)`).WillReturnRows(firstBatch)
-			mock.ExpectQuery(`WITH RECURSIVE (.*)`).WillReturnRows(secondBatch)
-
-			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, many)
-			Expect(changed).To(HaveLen(1))
-			Expect(changed[0].Name).To(Equal("t1001"))
-			Expect(mock.ExpectationsWereMet()).To(Succeed())
-		})
 	})
 })

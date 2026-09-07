@@ -547,13 +547,6 @@ func (c ChangedRelation) Describe() string {
 	return fmt.Sprintf("%s (%s)", c.FQN(), c.Reason())
 }
 
-// The storage check groups this many locked tables per query. Each batch is
-// one SELECT, so the size bounds the statement, not the result: the partitions
-// below the batch come back whatever the size is. LockTables uses smaller
-// batches only because each of its statements is a separate round trip that
-// advances a progress bar.
-const changedRelationsBatchSize = 1000
-
 /*
  * GetRelationsChangedSinceSnapshot reports which of the given locked tables,
  * or of the partitions below them, changed on disk between the backup
@@ -587,17 +580,11 @@ func GetRelationsChangedSinceSnapshot(connectionPool *dbconn.DBConn, tables []Re
 		SnapshotRelfilenode uint32
 		CurrentRelfilenode  sql.NullInt64
 	}
-	rows := make([]relationStorage, 0)
-	for start := 0; start < len(tables); start += changedRelationsBatchSize {
-		end := start + changedRelationsBatchSize
-		if end > len(tables) {
-			end = len(tables)
-		}
-		oids := make([]string, 0, end-start)
-		for _, table := range tables[start:end] {
-			oids = append(oids, strconv.FormatUint(uint64(table.Oid), 10))
-		}
-		query := fmt.Sprintf(`
+	oids := make([]string, 0, len(tables))
+	for _, table := range tables {
+		oids = append(oids, strconv.FormatUint(uint64(table.Oid), 10))
+	}
+	query := fmt.Sprintf(`
 	WITH RECURSIVE inheritance(oid, parentoid) AS (
 		SELECT c.oid, NULL::oid
 		FROM pg_class c
@@ -616,11 +603,9 @@ func GetRelationsChangedSinceSnapshot(connectionPool *dbconn.DBConn, tables []Re
 	FROM inheritance h
 		JOIN pg_class c ON c.oid = h.oid
 		JOIN pg_namespace n ON n.oid = c.relnamespace`, strings.Join(oids, ", "))
-		batchRows := make([]relationStorage, 0)
-		err := connectionPool.Select(&batchRows, query)
-		gplog.FatalOnError(err)
-		rows = append(rows, batchRows...)
-	}
+	rows := make([]relationStorage, 0)
+	err := connectionPool.Select(&rows, query)
+	gplog.FatalOnError(err)
 
 	locked := make(map[uint32]int, len(tables))
 	for i, table := range tables {
