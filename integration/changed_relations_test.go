@@ -297,7 +297,15 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 
 			Expect(dataTableFQNs(dataTables)).To(ConsistOf(aoTable, heapTable, stableTable, partTable))
 			Expect(backup.GetSkippedDataTables()).To(BeEmpty())
-			Expect(backup.GetAOIncrementalMetadata(connectionPool)).To(HaveKey(partLeaf))
+			// Without --leaf-partition-data the incremental entry is the parent's
+			// on 6.x, where the parent has storage, and the leaf's on 7.x, where
+			// it has none.
+			aoMetadata := backup.GetAOIncrementalMetadata(connectionPool)
+			if connectionPool.Version.Before("7") {
+				Expect(aoMetadata).To(HaveKey(partTable))
+			} else {
+				Expect(aoMetadata).To(HaveKey(partLeaf))
+			}
 			Expect(dbconn.MustSelectString(connectionPool,
 				fmt.Sprintf("SELECT count(*)::text AS string FROM %s", partTable))).To(Equal("30"))
 		})
