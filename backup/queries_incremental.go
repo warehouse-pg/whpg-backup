@@ -28,6 +28,11 @@ func getAllModCounts(connectionPool *dbconn.DBConn) map[string]int64 {
 	var segTableFQNs = getAOSegTableFQNs(connectionPool)
 	modCounts := make(map[string]int64)
 	for aoTableFQN, segTableFQN := range segTableFQNs {
+		// A table whose data is not backed up gets no incremental entry. Its
+		// segment relation name comes from the snapshot and may no longer exist.
+		if skippedDataTables[aoTableFQN] {
+			continue
+		}
 		modCounts[aoTableFQN] = getModCount(connectionPool, segTableFQN)
 	}
 	return modCounts

@@ -518,6 +518,86 @@ func LockTables(connectionPool *dbconn.DBConn, tables []Relation) {
 	progressBar.Finish()
 }
 
+// ChangedRelation is a locked table whose storage no longer matches what the
+// backup snapshot describes: it was rewritten, truncated, or dropped (and
+// possibly recreated under the same name) after the snapshot was taken.
+type ChangedRelation struct {
+	Relation
+	Dropped bool
+}
+
+// Reason says what happened to the table, for warnings.
+func (c ChangedRelation) Reason() string {
+	if c.Dropped {
+		return "dropped and recreated"
+	}
+	return "rewritten or truncated"
+}
+
+// Describe names the table together with its Reason.
+func (c ChangedRelation) Describe() string {
+	return fmt.Sprintf("%s (%s)", c.FQN(), c.Reason())
+}
+
+/*
+ * GetRelationsChangedSinceSnapshot reports which of the given tables changed
+ * on disk between the backup snapshot and the locks now held on them.
+ *
+ * The catalog rows come from the backup snapshot, while pg_relation_filenode()
+ * looks the relation up in the live catalog, the same way LOCK TABLE and the
+ * later COPY do. A table rewritten by ALTER TABLE ... SET WITH (REORGANIZE=true),
+ * SET DISTRIBUTED BY, or VACUUM FULL, or truncated, has a new relfilenode; a
+ * table dropped (and possibly recreated under the same name) has none. Either
+ * way the snapshot can no longer see the table's data: the old files are gone,
+ * and for append-optimized tables the pg_aoseg relation named under the
+ * snapshot no longer exists. Relations without storage (relfilenode 0, e.g.
+ * partition roots) are not compared. The callers hold ACCESS SHARE locks, so
+ * the answer cannot change after this returns. Input order is preserved.
+ */
+func GetRelationsChangedSinceSnapshot(connectionPool *dbconn.DBConn, tables []Relation) []ChangedRelation {
+	if len(tables) == 0 {
+		return nil
+	}
+	oids := make([]string, len(tables))
+	for i, table := range tables {
+		oids[i] = strconv.FormatUint(uint64(table.Oid), 10)
+	}
+	query := fmt.Sprintf(`
+	SELECT c.oid,
+		c.relfilenode AS snapshotrelfilenode,
+		pg_catalog.pg_relation_filenode(c.oid) AS currentrelfilenode
+	FROM pg_class c
+	WHERE c.oid IN (%s)`, strings.Join(oids, ", "))
+
+	results := make([]struct {
+		Oid                 uint32
+		SnapshotRelfilenode uint32
+		CurrentRelfilenode  sql.NullInt64
+	}, 0)
+	err := connectionPool.Select(&results, query)
+	gplog.FatalOnError(err)
+
+	dropped := make(map[uint32]bool)
+	for _, result := range results {
+		if result.SnapshotRelfilenode == 0 {
+			continue
+		}
+		if !result.CurrentRelfilenode.Valid {
+			dropped[result.Oid] = true
+		} else if uint32(result.CurrentRelfilenode.Int64) != result.SnapshotRelfilenode {
+			dropped[result.Oid] = false
+		}
+	}
+
+	changed := make([]ChangedRelation, 0)
+	for _, table := range tables {
+		if isDropped, ok := dropped[table.Oid]; ok {
+			changed = append(changed, ChangedRelation{Relation: table, Dropped: isDropped})
+		}
+	}
+	return changed
+}
+
 // GenerateTableBatches batches tables to reduce network congestion and
 // resource contention.  Returns an array of batches where a batch of tables is
 // a single string with comma separated tables

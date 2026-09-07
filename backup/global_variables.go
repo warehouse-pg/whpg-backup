@@ -48,6 +48,16 @@ var (
 	filterRelationClause string
 	quotedRoleNames      map[string]string
 	backupSnapshot       string
+	// The include and exclude lists are resolved to OIDs under the backup
+	// snapshot; these options let them be resolved again when the backup
+	// has to move to a new snapshot (see lockBackupSet).
+	filterOptions *options.Options
+	// How many snapshots lockBackupSet may try before it gives up on tables
+	// that keep changing under it and skips their data.
+	maxSnapshotAttempts = 3
+	// FQNs of tables whose data is not backed up because their storage was
+	// still changing after the last snapshot attempt. Their DDL is backed up.
+	skippedDataTables map[string]bool
 	/*
 	 * Used for synchronizing DoCleanup.  In DoInit() we increment the group
 	 * and then wait for at least one DoCleanup to finish, either in DoTeardown
@@ -161,6 +171,14 @@ func SetVersion(v string) {
 
 func SetFilterRelationClause(filterClause string) {
 	filterRelationClause = filterClause
+}
+
+func SetMaxSnapshotAttempts(attempts int) {
+	maxSnapshotAttempts = attempts
+}
+
+func GetSkippedDataTables() map[string]bool {
+	return skippedDataTables
 }
 
 func SetQuotedRoleNames(quotedRoles map[string]string) {

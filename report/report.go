@@ -29,6 +29,9 @@ import (
 type Report struct {
 	BackupParamsString string
 	DatabaseSize       string
+	// Tables whose DDL is in the backup but whose data is not, because their
+	// storage kept changing between the backup snapshot and the table locks.
+	SkippedDataTables []string
 	history.BackupConfig
 }
 
@@ -150,6 +153,10 @@ func (report *Report) WriteBackupReportFile(reportFilename string, timestamp str
 		reportInfo = append(reportInfo,
 			LineInfo{},
 			LineInfo{Key: "backup status:", Value: history.BackupStatusSucceed})
+	}
+	if len(report.SkippedDataTables) > 0 {
+		reportInfo = append(reportInfo,
+			LineInfo{Key: "data not backed up:", Value: strings.Join(report.SkippedDataTables, ", ")})
 	}
 	reportInfo = append(reportInfo, LineInfo{})
 	if report.DatabaseSize != "" {

@@ -207,14 +207,7 @@ func createBackupDirectoriesOnAllHosts() {
  */
 
 func RetrieveAndProcessTables() ([]Table, []Table) {
-	includedRelations := GetIncludedUserTableRelations(connectionPool, IncludedRelationFqns)
-	tableRelations := ConvertRelationsOptionsToBackup(includedRelations)
-
-	// Query extension config dump tables early so we can lock them and
-	// include them in the single ConstructDefinitionsForTables call.
-	configDumpRelations, configDumpFilterConds := GetExtensionConfigDumpRelations(connectionPool)
-	tableRelations = append(tableRelations, configDumpRelations...)
-	LockTables(connectionPool, tableRelations)
+	tableRelations, configDumpRelations, configDumpFilterConds := lockBackupSet()
 
 	if connectionPool.Version.AtLeast("6") {
 		tableRelations = append(tableRelations, GetForeignTableRelations(connectionPool)...)
@@ -245,9 +238,123 @@ func RetrieveAndProcessTables() ([]Table, []Table) {
 
 	metadataTables, dataTables := SplitTablesByPartitionType(regularTables, IncludedRelationFqns)
 	dataTables = append(dataTables, configDumpTables...)
+	dataTables = removeSkippedDataTables(dataTables)
 	objectCounts["Tables"] = len(metadataTables)
 
 	return metadataTables, dataTables
+}
+
+/*
+ * lockBackupSet resolves the tables in the backup set and takes ACCESS SHARE
+ * locks on them. The catalog is read under the backup snapshot, but LOCK TABLE
+ * resolves names against the live catalog, so a table rewritten (ALTER TABLE
+ * ... SET WITH (REORGANIZE=true), SET DISTRIBUTED BY, VACUUM FULL), truncated,
+ * or dropped and recreated between the two can no longer be read consistently
+ * under the snapshot: its old storage is gone. Nothing can change once the
+ * locks are held, so the set is verified after locking. If a table changed,
+ * the snapshot and the resolution are redone, up to maxSnapshotAttempts times.
+ * Tables still changing after the last attempt keep their DDL in the backup
+ * but their data is skipped, with a warning.
+ */
+func lockBackupSet() ([]Relation, []Relation, map[uint32]string) {
+	skippedDataTables = make(map[string]bool)
+	for attempt := 1; ; attempt++ {
+		includedRelations := GetIncludedUserTableRelations(connectionPool, IncludedRelationFqns)
+		tableRelations := ConvertRelationsOptionsToBackup(includedRelations)
+
+		// Query extension config dump tables early so we can lock them and
+		// include them in the single ConstructDefinitionsForTables call.
+		configDumpRelations, configDumpFilterConds := GetExtensionConfigDumpRelations(connectionPool)
+		tableRelations = append(tableRelations, configDumpRelations...)
+		LockTables(connectionPool, tableRelations)
+
+		// A metadata-only backup reads nothing but the catalog, which the
+		// snapshot keeps consistent whatever happens to the tables' storage.
+		if MustGetFlagBool(options.METADATA_ONLY) {
+			return tableRelations, configDumpRelations, configDumpFilterConds
+		}
+		changedRelations := GetRelationsChangedSinceSnapshot(connectionPool, tableRelations)
+		if len(changedRelations) == 0 {
+			return tableRelations, configDumpRelations, configDumpFilterConds
+		}
+
+		if attempt >= maxSnapshotAttempts {
+			for _, relation := range changedRelations {
+				gplog.Warn("Data for table %s not backed up: the table was %s after the backup snapshot was taken "+
+					"and was still changing after %d attempt(s). Its DDL is backed up.", relation.FQN(), relation.Reason(), attempt)
+				skippedDataTables[relation.FQN()] = true
+			}
+			return tableRelations, configDumpRelations, configDumpFilterConds
+		}
+
+		descriptions := make([]string, len(changedRelations))
+		for i, relation := range changedRelations {
+			descriptions[i] = relation.Describe()
+		}
+		gplog.Warn("Table(s) %s changed on disk after the backup snapshot was taken; taking a new snapshot (attempt %d of %d)",
+			strings.Join(descriptions, ", "), attempt+1, maxSnapshotAttempts)
+		restartBackupTransactions()
+	}
+}
+
+/*
+ * restartBackupTransactions gives every open backup connection a new
+ * transaction on a fresh synchronized snapshot and resolves the include and
+ * exclude lists again under it, so a table dropped and recreated under the
+ * same name is found by its new OID. Nothing has been written when this runs.
+ *
+ * The session GUCs are set inside the transaction at connection setup, so the
+ * rollback discards them; they are set again the same way, in the same order.
+ */
+func restartBackupTransactions() {
+	backupSnapshot = ""
+	for connNum := 0; connNum < connectionPool.NumConns; connNum++ {
+		if connectionPool.Tx[connNum] == nil {
+			continue
+		}
+		// The old transaction is discarded either way; a rollback error only
+		// means its connection is already gone, and Begin reconnects.
+		err := connectionPool.Rollback(connNum)
+		if err != nil {
+			gplog.Warn("Connection %d: %s", connNum, err)
+		}
+		connectionPool.MustBegin(connNum)
+		if connectionPool.Version.AtLeast(SNAPSHOT_GPDB_MIN_VERSION) {
+			if connNum == 0 {
+				snapshot, err := GetSynchronizedSnapshot(connectionPool)
+				gplog.FatalOnError(err)
+				backupSnapshot = snapshot
+			} else if backupSnapshot != "" {
+				err := SetSynchronizedSnapshot(connectionPool, connNum, backupSnapshot)
+				gplog.FatalOnError(err)
+			}
+		}
+		SetSessionGUCs(connNum)
+	}
+
+	if filterOptions == nil {
+		return
+	}
+	SetFilterRelationClause("")
+	ValidateAndProcessFilterLists(filterOptions)
+	includeOids := GetOidsFromRelationList(IncludedRelationFqns)
+	err := ExpandIncludesForPartitions(connectionPool, filterOptions, includeOids, cmdFlags)
+	gplog.FatalOnError(err)
+}
+
+// removeSkippedDataTables drops the tables whose data is not backed up from
+// the data backup set; they stay in the metadata backup set.
+func removeSkippedDataTables(dataTables []Table) []Table {
+	if len(skippedDataTables) == 0 {
+		return dataTables
+	}
+	kept := make([]Table, 0, len(dataTables))
+	for _, table := range dataTables {
+		if !skippedDataTables[table.FQN()] {
+			kept = append(kept, table)
+		}
+	}
+	return kept
 }
 
 func retrieveFunctions(sortables *[]Sortable, metadataMap MetadataMap) ([]Function, map[uint32]FunctionInfo) {
