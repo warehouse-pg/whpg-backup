@@ -7,9 +7,12 @@ import (
 	"github.com/greenplum-db/gpbackup/backup"
 	"github.com/greenplum-db/gpbackup/options"
 	"github.com/spf13/cobra"
+	"github.com/warehouse-pg/common-go-libs/operating"
 	"github.com/warehouse-pg/common-go-libs/testhelper"
 
+	"fmt"
 	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("backup/validate tests", func() {
@@ -285,5 +288,59 @@ var _ = Describe("backup/validate tests", func() {
 			Entry("jobs combos", "--jobs 2 --plugin-config /tmp/file", true),
 			Entry("jobs combos", "--jobs 2 --data-only", true),
 		)
+	})
+})
+
+var _ = Describe("SetSnapshotAttemptsFromEnvironment", func() {
+	var value string
+	BeforeEach(func() {
+		operating.System.Getenv = func(key string) string {
+			if key == backup.SnapshotAttemptsEnvVar {
+				return value
+			}
+			return ""
+		}
+	})
+	AfterEach(func() {
+		operating.System = operating.InitializeSystemFunctions()
+		backup.SetMaxSnapshotAttempts(3)
+	})
+	It("keeps the default when the variable is unset", func() {
+		value = ""
+		backup.SetMaxSnapshotAttempts(7)
+		backup.SetSnapshotAttemptsFromEnvironment()
+		Expect(backup.GetMaxSnapshotAttempts()).To(Equal(3))
+	})
+	It("uses the number of attempts given", func() {
+		value = "5"
+		backup.SetSnapshotAttemptsFromEnvironment()
+		Expect(backup.GetMaxSnapshotAttempts()).To(Equal(5))
+	})
+	It("accepts 1, which disables the retry", func() {
+		value = "1"
+		backup.SetSnapshotAttemptsFromEnvironment()
+		Expect(backup.GetMaxSnapshotAttempts()).To(Equal(1))
+	})
+	DescribeTable("rejects anything that is not a whole number of at least 1",
+		func(given string) {
+			value = given
+			defer testhelper.ShouldPanicWithMessage(
+				fmt.Sprintf(`%s must be a whole number of at least 1, got "%s"`, backup.SnapshotAttemptsEnvVar, given))
+			backup.SetSnapshotAttemptsFromEnvironment()
+		},
+		Entry("zero", "0"),
+		Entry("negative", "-2"),
+		Entry("not a number", "abc"),
+		Entry("fraction", "2.5"),
+		Entry("surrounding space", " 4"),
+	)
+	It("leaves the attempt count alone when it rejects a value", func() {
+		value = "0"
+		backup.SetMaxSnapshotAttempts(3)
+		defer func() {
+			_ = recover()
+			Expect(backup.GetMaxSnapshotAttempts()).To(Equal(3))
+		}()
+		backup.SetSnapshotAttemptsFromEnvironment()
 	})
 })
