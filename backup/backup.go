@@ -45,6 +45,7 @@ func DoSetup() {
 	SetLoggerVerbosity()
 	gplog.Verbose("Backup Command: %s", os.Args)
 	gplog.Info("gpbackup version = %s", GetVersion())
+	SetSnapshotAttemptsFromEnvironment()
 
 	utils.CheckGpexpandRunning(utils.BackupPreventedByGpexpandMessage)
 	timestamp := history.CurrentTimestamp()

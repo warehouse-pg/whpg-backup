@@ -33,6 +33,13 @@ const (
 /*
  * Non-flag variables
  */
+// SnapshotAttemptsEnvVar names the environment variable that tunes how many
+// snapshots a backup may take when tables change under it; see
+// SetSnapshotAttemptsFromEnvironment.
+const SnapshotAttemptsEnvVar = "WHPGBACKUP_SNAPSHOT_ATTEMPTS"
+
+const defaultSnapshotAttempts = 3
+
 var (
 	backupReport         *report.Report
 	connectionPool       *dbconn.DBConn
@@ -50,7 +57,7 @@ var (
 	backupSnapshot       string
 	// How many snapshots lockBackupSet may try before it gives up on tables
 	// that keep changing under it and skips their data.
-	maxSnapshotAttempts = 3
+	maxSnapshotAttempts = defaultSnapshotAttempts
 	// The relations still changing on disk after the last snapshot attempt
 	// and the locked tables above them, by FQN. Their data cannot be read
 	// under the snapshot, and a changed relation's pg_aoseg name is stale.
@@ -177,6 +184,10 @@ func SetFilterRelationClause(filterClause string) {
 
 func SetMaxSnapshotAttempts(attempts int) {
 	maxSnapshotAttempts = attempts
+}
+
+func GetMaxSnapshotAttempts() int {
+	return maxSnapshotAttempts
 }
 
 func GetSkippedDataTables() map[string]bool {
