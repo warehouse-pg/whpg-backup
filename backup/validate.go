@@ -2,6 +2,7 @@ package backup
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/greenplum-db/gpbackup/filepath"
 	"github.com/greenplum-db/gpbackup/history"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/warehouse-pg/common-go-libs/dbconn"
 	"github.com/warehouse-pg/common-go-libs/gplog"
+	"github.com/warehouse-pg/common-go-libs/operating"
 )
 
 /*
@@ -216,4 +218,26 @@ func validateFromTimestamp(fromTimestamp string) {
 			"that of the current one. Please refer to the report to view the flags supplied for the "+
 			"previous backup.", fromTimestampFPInfo.Timestamp), "")
 	}
+}
+
+/*
+ * SetSnapshotAttemptsFromEnvironment reads how many snapshots lockBackupSet
+ * may take before it gives up on tables that keep changing. The value comes
+ * from the WHPGBACKUP_SNAPSHOT_ATTEMPTS environment variable, so a site can
+ * tune it without a flag: unset or empty keeps the default, 1 means no retry,
+ * and anything that is not a whole number of at least 1 stops the backup
+ * before it starts.
+ */
+func SetSnapshotAttemptsFromEnvironment() {
+	value := operating.System.Getenv(SnapshotAttemptsEnvVar)
+	if value == "" {
+		maxSnapshotAttempts = defaultSnapshotAttempts
+		return
+	}
+	attempts, err := strconv.Atoi(value)
+	if err != nil || attempts < 1 {
+		gplog.Fatal(errors.Errorf(`%s must be a whole number of at least 1, got "%s"`, SnapshotAttemptsEnvVar, value), "")
+	}
+	maxSnapshotAttempts = attempts
+	gplog.Verbose("Snapshot attempts set to %d by %s", attempts, SnapshotAttemptsEnvVar)
 }

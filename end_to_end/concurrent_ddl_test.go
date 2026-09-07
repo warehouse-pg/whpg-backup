@@ -2,6 +2,7 @@ package end_to_end_test
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 
@@ -32,6 +33,8 @@ const (
 	changedTableWarning = "changed on disk after the backup snapshot was taken"
 	newSnapshotWarning  = "taking a new snapshot"
 	dataSkippedWarning  = "not backed up"
+	// The environment variable that tunes how many snapshots gpbackup takes.
+	snapshotAttemptsEnvVar = "WHPGBACKUP_SNAPSHOT_ATTEMPTS"
 )
 
 // holdRewrite opens a transaction on a fresh connection, runs the given
@@ -57,12 +60,17 @@ func releaseRewrite(conn *dbconn.DBConn) {
 // returns a channel that is closed when it exits, plus pointers to its output
 // and error.
 func startBackup(extraArgs ...string) (<-chan struct{}, *string, *error) {
+	return startBackupEnv(nil, extraArgs...)
+}
+
+// startBackupEnv is startBackup with extra environment variables (KEY=value).
+func startBackupEnv(env []string, extraArgs ...string) (<-chan struct{}, *string, *error) {
 	done := make(chan struct{})
 	var output string
 	var err error
 	go func() {
 		defer GinkgoRecover()
-		output, err = runBackup(extraArgs...)
+		output, err = runBackupEnv(env, extraArgs...)
 		close(done)
 	}()
 	return done, &output, &err
@@ -117,8 +125,14 @@ func waitForLockWaiter(conn *dbconn.DBConn, schema string, table string, mode st
 // runBackup runs gpbackup with the given extra flags and returns its combined
 // output and exit error.
 func runBackup(extraArgs ...string) (string, error) {
+	return runBackupEnv(nil, extraArgs...)
+}
+
+// runBackupEnv is runBackup with extra environment variables (KEY=value).
+func runBackupEnv(env []string, extraArgs ...string) (string, error) {
 	args := append([]string{"--verbose", "--dbname", "testdb", "--backup-dir", backupDir}, extraArgs...)
 	cmd := exec.Command(gpbackupPath, args...)
+	cmd.Env = append(os.Environ(), env...)
 	output, err := cmd.CombinedOutput()
 	return string(output), err
 }
@@ -349,6 +363,40 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		gprestore(gprestorePath, restoreHelperPath, timestamp,
 			"--redirect-db", "restoredb", "--backup-dir", backupDir)
 		assertDataRestored(restoreConn, map[string]int{"schema2.returns": 6})
+	})
+
+	It("takes only as many snapshots as WHPGBACKUP_SNAPSHOT_ATTEMPTS allows", func() {
+		// One attempt means no retry: the first change is final and the
+		// table's data is skipped.
+		rewriter := holdRewrite("ALTER TABLE schema2.ao1 SET WITH (reorganize=true)")
+		done, output, err := startBackupEnv([]string{snapshotAttemptsEnvVar + "=1"}, "--leaf-partition-data")
+		defer waitForBackupExit(done)
+		defer releaseRewrite(rewriter)
+
+		waitForBackupLockWait(backupConn)
+		rewriter.MustCommit()
+		waitForBackupExit(done)
+
+		Expect(*err).ToNot(HaveOccurred(), *output)
+		Expect(*output).To(ContainSubstring("Backup completed successfully"))
+		Expect(*output).ToNot(ContainSubstring(newSnapshotWarning))
+		Expect(*output).To(ContainSubstring("still changing after 1 attempt(s)"))
+		Expect(*output).To(ContainSubstring(dataSkippedWarning))
+		Expect(*output).To(ContainSubstring("schema2.ao1"))
+
+		timestamp := getBackupTimestamp(*output)
+		tocStruct := readTOC(timestamp)
+		Expect(findDataEntry(tocStruct, "schema2", "ao1")).To(BeNil())
+		Expect(findDataEntry(tocStruct, "schema2", "ao2").RowsCopied).To(Equal(int64(1000)))
+	})
+
+	It("rejects an invalid WHPGBACKUP_SNAPSHOT_ATTEMPTS before the backup starts", func() {
+		for _, value := range []string{"0", "-1", "abc", "2.5"} {
+			output, err := runBackupEnv([]string{snapshotAttemptsEnvVar + "=" + value})
+			Expect(err).To(HaveOccurred(), output)
+			Expect(output).To(ContainSubstring(snapshotAttemptsEnvVar + " must be a whole number of at least 1"))
+			Expect(output).ToNot(ContainSubstring("Backup Timestamp"))
+		}
 	})
 
 	It("skips the data and statistics of a table that keeps changing after every attempt and completes", func() {
