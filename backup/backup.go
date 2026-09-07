@@ -197,7 +197,7 @@ func DoBackup() {
 	printDataBackupWarnings(numExtOrForeignTables)
 	printSkippedDataTableWarnings()
 	if MustGetFlagBool(options.WITH_STATS) {
-		backupStatistics(metadataTables)
+		backupStatistics(tablesWithBackedUpData(metadataTables))
 	}
 
 	globalTOC.WriteToFileAndMakeReadOnly(globalFPInfo.GetTOCFilePath())

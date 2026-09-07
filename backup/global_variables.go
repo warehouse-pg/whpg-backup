@@ -52,12 +52,14 @@ var (
 	// that keep changing under it and skips their data.
 	maxSnapshotAttempts = 3
 	// The relations still changing on disk after the last snapshot attempt
-	// (value true) and the locked tables above them (value false), by FQN.
-	// Their data cannot be read under the snapshot, and the changed ones
-	// have stale pg_aoseg names.
-	tablesChangedSinceSnapshot map[string]bool
-	// FQNs of the tables removed from the data backup set because of that.
+	// and the locked tables above them, by FQN. Their data cannot be read
+	// under the snapshot, and a changed relation's pg_aoseg name is stale.
+	changedRelations map[string]bool
+	// FQNs of the tables left out of the data backup set because of that.
 	skippedDataTables map[string]bool
+	// The filter options the backup started with, kept so the include and
+	// exclude lists can be resolved again under a new snapshot.
+	filterOptions *options.Options
 	/*
 	 * Used for synchronizing DoCleanup.  In DoInit() we increment the group
 	 * and then wait for at least one DoCleanup to finish, either in DoTeardown

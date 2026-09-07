@@ -18,8 +18,8 @@ import (
 /*
  * gpbackup exports its snapshot before it locks the tables. A table whose
  * storage is replaced in that window (ALTER TABLE ... SET WITH (REORGANIZE=true),
- * SET DISTRIBUTED BY, TRUNCATE, VACUUM FULL, or DROP + CREATE under the same
- * name) can no longer be read consistently under that snapshot: its old files
+ * SET DISTRIBUTED BY, TRUNCATE, VACUUM FULL of a heap table, or DROP + CREATE
+ * under the same name) can no longer be read consistently under that snapshot: its old files
  * are gone, so COPY sees no rows, and for AO tables the pg_aoseg helper named
  * under the snapshot no longer exists.
  *
@@ -277,6 +277,46 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		assertDataRestored(restoreConn, map[string]int{"schema2.ao1": 7})
 	})
 
+	It("expands an included partitioned table again when it is dropped and recreated with more partitions in the window", func() {
+		// The include list is expanded to the partitions when the backup
+		// starts. The retry must expand it again, or the partition created in
+		// the window has no DDL in the backup and the restore fails on it.
+		testhelper.AssertQueryRuns(backupConn, `CREATE TABLE schema2.relayout (id int, d int) DISTRIBUTED BY (id)
+			PARTITION BY RANGE (d) (START (1) END (3) EVERY (1));
+			INSERT INTO schema2.relayout SELECT g, (g % 2) + 1 FROM generate_series(1, 20) g`)
+		defer testhelper.AssertQueryRuns(backupConn, "DROP TABLE schema2.relayout")
+		rewriter := holdRewrite(`DROP TABLE schema2.relayout;
+			CREATE TABLE schema2.relayout (id int, d int) DISTRIBUTED BY (id)
+				PARTITION BY RANGE (d) (START (1) END (4) EVERY (1));
+			INSERT INTO schema2.relayout SELECT g, (g % 3) + 1 FROM generate_series(1, 30) g`)
+		done, output, err := startBackup("--include-table", "schema2.relayout")
+		defer waitForBackupExit(done)
+		defer releaseRewrite(rewriter)
+
+		waitForBackupLockWait(backupConn)
+		rewriter.MustCommit()
+		waitForBackupExit(done)
+
+		Expect(*err).ToNot(HaveOccurred(), *output)
+		Expect(*output).To(ContainSubstring("Backup completed successfully"))
+		Expect(*output).ToNot(ContainSubstring("[CRITICAL]"))
+		Expect(*output).To(ContainSubstring(changedTableWarning))
+		Expect(*output).ToNot(ContainSubstring(dataSkippedWarning))
+
+		timestamp := getBackupTimestamp(*output)
+		tocStruct := readTOC(timestamp)
+		Expect(findDataEntry(tocStruct, "schema2", "relayout").RowsCopied).To(Equal(int64(30)))
+
+		// A filtered backup carries no CREATE SCHEMA.
+		testhelper.AssertQueryRuns(restoreConn, "CREATE SCHEMA schema2")
+		gprestore(gprestorePath, restoreHelperPath, timestamp,
+			"--redirect-db", "restoredb", "--backup-dir", backupDir)
+		assertDataRestored(restoreConn, map[string]int{
+			"schema2.relayout":         30,
+			"schema2.relayout_1_prt_3": 10,
+		})
+	})
+
 	It("retries when a partition is truncated while the backup copies the parent", func() {
 		// Without --leaf-partition-data the parent is locked and copied and the
 		// partitions are only reached through it. Truncate and reload one
@@ -311,7 +351,7 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		assertDataRestored(restoreConn, map[string]int{"schema2.returns": 6})
 	})
 
-	It("skips the data of a table that keeps changing after every attempt, keeps its DDL, and completes", func() {
+	It("skips the data and statistics of a table that keeps changing after every attempt and completes", func() {
 		// Each attempt must find the table rewritten again. Queue the next
 		// rewrite behind the current one before releasing it: gpbackup's
 		// AccessShareLock request is ahead of it in the lock queue, so the
@@ -319,7 +359,7 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		// the queued rewrite start and block the next attempt.
 		const attempts = 3
 		rewriter := holdRewrite("ALTER TABLE schema2.ao1 SET WITH (reorganize=true)")
-		done, output, err := startBackup("--leaf-partition-data")
+		done, output, err := startBackup("--leaf-partition-data", "--with-stats")
 		defer waitForBackupExit(done)
 		defer releaseRewrite(rewriter)
 
@@ -365,6 +405,12 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 
 		reportContents := string(getMetdataFileContents(backupDir, timestamp, "report"))
 		Expect(reportContents).To(ContainSubstring("schema2.ao1"))
+
+		// Statistics describe data the backup does not have; the skipped table
+		// gets none, the others keep theirs.
+		statistics := string(getMetdataFileContents(backupDir, timestamp, "statistics.sql"))
+		Expect(statistics).ToNot(ContainSubstring("schema2.ao1"))
+		Expect(statistics).To(ContainSubstring("schema2.ao2"))
 
 		// The backup restores: the skipped table exists and is empty.
 		gprestore(gprestorePath, restoreHelperPath, timestamp,

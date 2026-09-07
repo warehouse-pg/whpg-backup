@@ -547,8 +547,11 @@ func (c ChangedRelation) Describe() string {
 	return fmt.Sprintf("%s (%s)", c.FQN(), c.Reason())
 }
 
-// The storage check groups this many locked tables per query, like the
-// batches LockTables uses, so the statement stays a reasonable size.
+// The storage check groups this many locked tables per query. Each batch is
+// one SELECT, so the size bounds the statement, not the result: the partitions
+// below the batch come back whatever the size is. LockTables uses smaller
+// batches only because each of its statements is a separate round trip that
+// advances a progress bar.
 const changedRelationsBatchSize = 1000
 
 /*

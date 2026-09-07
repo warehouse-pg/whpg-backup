@@ -2,6 +2,8 @@ package integration
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/greenplum-db/gpbackup/backup"
 	"github.com/greenplum-db/gpbackup/options"
@@ -269,7 +271,39 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 			Expect(dbconn.MustSelectString(connectionPool,
 				fmt.Sprintf("SELECT count(*)::text AS string FROM %s", aoTable))).To(Equal("7"))
 		})
-		It("skips the data of a table still changed after the last attempt and keeps its DDL", func() {
+		It("expands the include list again when a partitioned table is dropped and recreated with more partitions in the window", func() {
+			// The include list was expanded to the partitions when the backup
+			// started; the retry must expand it again from the user's names,
+			// or a partition created in the window is missed.
+			beginBackupTransaction()
+			testhelper.AssertQueryRuns(ddlConn, fmt.Sprintf(`DROP TABLE %s;
+				CREATE TABLE %s (id int, d int) WITH (appendonly=true) DISTRIBUTED BY (id)
+					PARTITION BY RANGE (d) (START (1) END (5) EVERY (1));
+				INSERT INTO %s SELECT g, (g %% 4) + 1 FROM generate_series(1, 40) g`, partTable, partTable, partTable))
+
+			_, dataTables := backup.RetrieveAndProcessTables()
+
+			Expect(dataTableFQNs(dataTables)).To(ConsistOf(aoTable, heapTable, stableTable, partTable))
+			Expect(backup.GetSkippedDataTables()).To(BeEmpty())
+			included := make([]string, 0, len(backup.IncludedRelationFqns))
+			for _, relation := range backup.IncludedRelationFqns {
+				included = append(included, relation.Schema+"."+relation.Name)
+			}
+			Expect(included).To(ContainElement(partTable))
+			if connectionPool.Version.AtLeast("7") {
+				// 7.x lists the partitions themselves; the new fourth one is there.
+				Expect(included).To(ContainElement(partTable + "_1_prt_4"))
+			}
+			// Every OID in the list is a live relation under the new snapshot.
+			oids := backup.GetOidsFromRelationList(backup.IncludedRelationFqns)
+			Expect(dbconn.MustSelectString(connectionPool, fmt.Sprintf(
+				"SELECT count(*)::text AS string FROM pg_class WHERE oid IN (%s)", strings.Join(oids, ",")))).
+				To(Equal(strconv.Itoa(len(oids))))
+			Expect(searchPath()).To(Equal("pg_catalog"))
+			Expect(dbconn.MustSelectString(connectionPool,
+				fmt.Sprintf("SELECT count(*)::text AS string FROM %s", partTable))).To(Equal("40"))
+		})
+		It("skips the data of a table still changed after the last attempt", func() {
 			backup.SetMaxSnapshotAttempts(1)
 			logStart := len(logFile.Contents())
 			beginBackupTransaction()
@@ -309,7 +343,7 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 			Expect(dbconn.MustSelectString(connectionPool,
 				fmt.Sprintf("SELECT count(*)::text AS string FROM %s", partTable))).To(Equal("30"))
 		})
-		It("skips the data of the parent when a partition keeps changing, and keeps the parent's DDL", func() {
+		It("skips the data of the parent when a partition keeps changing", func() {
 			// The parent is the table whose COPY reads the partition, so it is
 			// the one that has to leave the data set.
 			backup.SetMaxSnapshotAttempts(1)

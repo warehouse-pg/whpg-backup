@@ -29,8 +29,8 @@ import (
 type Report struct {
 	BackupParamsString string
 	DatabaseSize       string
-	// Tables whose DDL is in the backup but whose data is not, because their
-	// storage kept changing between the backup snapshot and the table locks.
+	// Tables whose data was left out of the backup because their storage kept
+	// changing between the backup snapshot and the table locks.
 	SkippedDataTables []string
 	history.BackupConfig
 }

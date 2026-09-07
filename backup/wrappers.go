@@ -14,6 +14,7 @@ import (
 	"github.com/greenplum-db/gpbackup/utils"
 	"github.com/nightlyone/lockfile"
 	"github.com/pkg/errors"
+	"github.com/spf13/pflag"
 	"github.com/warehouse-pg/common-go-libs/cluster"
 	"github.com/warehouse-pg/common-go-libs/dbconn"
 	"github.com/warehouse-pg/common-go-libs/gplog"
@@ -259,7 +260,7 @@ func RetrieveAndProcessTables() ([]Table, []Table) {
  * warning; whatever metadata the backup carries for them is unaffected.
  */
 func lockBackupSet() ([]Relation, []Relation, map[uint32]string) {
-	tablesChangedSinceSnapshot = make(map[string]bool)
+	changedRelations = make(map[string]bool)
 	skippedDataTables = make(map[string]bool)
 	for attempt := 1; ; attempt++ {
 		includedRelations := GetIncludedUserTableRelations(connectionPool, IncludedRelationFqns)
@@ -276,27 +277,25 @@ func lockBackupSet() ([]Relation, []Relation, map[uint32]string) {
 		if MustGetFlagBool(options.METADATA_ONLY) {
 			return tableRelations, configDumpRelations, configDumpFilterConds
 		}
-		changedRelations := GetRelationsChangedSinceSnapshot(connectionPool, tableRelations)
-		if len(changedRelations) == 0 {
+		changed := GetRelationsChangedSinceSnapshot(connectionPool, tableRelations)
+		if len(changed) == 0 {
 			return tableRelations, configDumpRelations, configDumpFilterConds
 		}
 
 		if attempt >= maxSnapshotAttempts {
-			for _, relation := range changedRelations {
+			for _, relation := range changed {
 				gplog.Warn("Table %s changed on disk after the backup snapshot was taken and was still changing "+
 					"after %d attempt(s); its data will not be backed up.", relation.Describe(), attempt)
-				tablesChangedSinceSnapshot[relation.FQN()] = true
+				changedRelations[relation.FQN()] = true
 				for _, ancestor := range relation.Ancestors {
-					if !tablesChangedSinceSnapshot[ancestor.FQN()] {
-						tablesChangedSinceSnapshot[ancestor.FQN()] = false
-					}
+					changedRelations[ancestor.FQN()] = true
 				}
 			}
 			return tableRelations, configDumpRelations, configDumpFilterConds
 		}
 
-		descriptions := make([]string, len(changedRelations))
-		for i, relation := range changedRelations {
+		descriptions := make([]string, len(changed))
+		for i, relation := range changed {
 			descriptions[i] = relation.Describe()
 		}
 		gplog.Warn("Table(s) %s changed on disk after the backup snapshot was taken; taking a new snapshot (attempt %d of %d)",
@@ -308,8 +307,7 @@ func lockBackupSet() ([]Relation, []Relation, map[uint32]string) {
 /*
  * restartBackupTransactions gives every open backup connection a new
  * transaction on a fresh synchronized snapshot and resolves the include and
- * exclude lists again under it, so a table dropped and recreated under the
- * same name is found by its new OID. Nothing has been written when this runs.
+ * exclude lists again under it. Nothing has been written when this runs.
  *
  * The session GUCs are set inside the transaction at connection setup, so the
  * rollback discards them; they are set again the same way, in the same order.
@@ -340,71 +338,41 @@ func restartBackupTransactions() {
 		SetSessionGUCs(connNum)
 	}
 
-	IncludedRelationFqns = resolveRelationOids(IncludedRelationFqns)
-	ExcludedRelationFqns = resolveRelationOids(ExcludedRelationFqns)
-	SetFilterRelationClause("")
+	refreshFilterLists()
 }
 
 /*
- * resolveRelationOids looks the given relations up again by name under the
- * current snapshot and returns them with their current OIDs, in the same
- * order. The names were validated and expanded to partitions when the backup
- * started, so only the OIDs can be stale: a table dropped and recreated under
- * the same name gets its new OID, and a name that no longer exists is dropped
- * from the list.
+ * refreshFilterLists resolves the include and exclude lists again under the
+ * current snapshot by repeating what the backup did when it started, from the
+ * names the user gave: validate them, then expand the include list to the
+ * partitions and dependent tables found now. A table dropped and recreated
+ * under the same name is found by its new OID, and a partition created in the
+ * window is picked up. As at the start, an included table that no longer
+ * exists is fatal.
  */
-func resolveRelationOids(relations []options.Relation) []options.Relation {
-	if len(relations) == 0 {
-		return relations
-	}
-	current := make(map[string]options.Relation, len(relations))
-	for start := 0; start < len(relations); start += changedRelationsBatchSize {
-		end := start + changedRelationsBatchSize
-		if end > len(relations) {
-			end = len(relations)
-		}
-		names := make([]string, 0, end-start)
-		for _, relation := range relations[start:end] {
-			names = append(names, fmt.Sprintf("('%s', '%s')",
-				utils.EscapeSingleQuotes(relation.Schema), utils.EscapeSingleQuotes(relation.Name)))
-		}
-		query := fmt.Sprintf(`
-	SELECT n.oid AS schemaoid,
-		c.oid,
-		n.nspname AS schema,
-		c.relname AS name
-	FROM pg_class c
-		JOIN pg_namespace n ON n.oid = c.relnamespace
-	WHERE (n.nspname, c.relname) IN (%s)`, strings.Join(names, ", "))
-		results := make([]options.Relation, 0)
-		err := connectionPool.Select(&results, query)
+func refreshFilterLists() {
+	filterOptions.ResetIncludedRelations()
+	if flag := cmdFlags.Lookup(options.INCLUDE_RELATION); flag != nil {
+		err := flag.Value.(pflag.SliceValue).Replace(filterOptions.GetOriginalIncludedTables())
 		gplog.FatalOnError(err)
-		for _, result := range results {
-			current[result.Schema+"."+result.Name] = result
-		}
 	}
-
-	resolved := make([]options.Relation, 0, len(relations))
-	for _, relation := range relations {
-		if found, ok := current[relation.Schema+"."+relation.Name]; ok {
-			resolved = append(resolved, found)
-		} else {
-			gplog.Verbose("Table %s no longer exists under the new snapshot", utils.MakeFQN(relation.Schema, relation.Name))
-		}
-	}
-	return resolved
+	ValidateAndProcessFilterLists(filterOptions)
+	includeOids := GetOidsFromRelationList(IncludedRelationFqns)
+	err := ExpandIncludesForPartitions(connectionPool, filterOptions, includeOids, cmdFlags)
+	gplog.FatalOnError(err)
+	SetFilterRelationClause("")
 }
 
 // removeChangedDataTables takes the tables that changed on disk since the
 // snapshot, or that have a partition that did, out of the data backup set. A
 // table is removed here only; nothing else about it is touched.
 func removeChangedDataTables(dataTables []Table) []Table {
-	if len(tablesChangedSinceSnapshot) == 0 {
+	if len(changedRelations) == 0 {
 		return dataTables
 	}
 	kept := make([]Table, 0, len(dataTables))
 	for _, table := range dataTables {
-		if _, changed := tablesChangedSinceSnapshot[table.FQN()]; changed {
+		if changedRelations[table.FQN()] {
 			gplog.Warn("Data for table %s not backed up.", table.FQN())
 			skippedDataTables[table.FQN()] = true
 			continue

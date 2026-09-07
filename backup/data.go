@@ -371,6 +371,22 @@ func printSkippedDataTableWarnings() {
 	}
 }
 
+// tablesWithBackedUpData leaves out the relations whose data changed after the
+// snapshot or was left out because of that: statistics describe data, and a
+// restore creates these tables empty.
+func tablesWithBackedUpData(tables []Table) []Table {
+	if len(changedRelations) == 0 {
+		return tables
+	}
+	kept := make([]Table, 0, len(tables))
+	for _, table := range tables {
+		if !changedRelations[table.FQN()] {
+			kept = append(kept, table)
+		}
+	}
+	return kept
+}
+
 func sortedSkippedDataTables() []string {
 	tables := make([]string, 0, len(skippedDataTables))
 	for fqn := range skippedDataTables {
