@@ -22,7 +22,6 @@ import (
  */
 func ValidateAndProcessFilterLists(opts *options.Options) {
 	gplog.Verbose("Validating Tables and Schemas exist in Database")
-	filterOptions = opts
 
 	// pre-create these so we can save the processed versions of our filters
 	IncludedRelationFqns = make([]options.Relation, 0)

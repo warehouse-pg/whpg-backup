@@ -48,15 +48,15 @@ var (
 	filterRelationClause string
 	quotedRoleNames      map[string]string
 	backupSnapshot       string
-	// The include and exclude lists are resolved to OIDs under the backup
-	// snapshot; these options let them be resolved again when the backup
-	// has to move to a new snapshot (see lockBackupSet).
-	filterOptions *options.Options
 	// How many snapshots lockBackupSet may try before it gives up on tables
 	// that keep changing under it and skips their data.
 	maxSnapshotAttempts = 3
-	// FQNs of tables whose data is not backed up because their storage was
-	// still changing after the last snapshot attempt. Their DDL is backed up.
+	// The relations still changing on disk after the last snapshot attempt
+	// (value true) and the locked tables above them (value false), by FQN.
+	// Their data cannot be read under the snapshot, and the changed ones
+	// have stale pg_aoseg names.
+	tablesChangedSinceSnapshot map[string]bool
+	// FQNs of the tables removed from the data backup set because of that.
 	skippedDataTables map[string]bool
 	/*
 	 * Used for synchronizing DoCleanup.  In DoInit() we increment the group

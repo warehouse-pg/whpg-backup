@@ -53,15 +53,16 @@ func releaseRewrite(conn *dbconn.DBConn) {
 	conn.Close()
 }
 
-// startBackup runs gpbackup in the background and returns a channel that is
-// closed when it exits, plus pointers to its output and error.
-func startBackup() (<-chan struct{}, *string, *error) {
+// startBackup runs gpbackup in the background with the given extra flags and
+// returns a channel that is closed when it exits, plus pointers to its output
+// and error.
+func startBackup(extraArgs ...string) (<-chan struct{}, *string, *error) {
 	done := make(chan struct{})
 	var output string
 	var err error
 	go func() {
 		defer GinkgoRecover()
-		output, err = runLeafPartitionBackup()
+		output, err = runBackup(extraArgs...)
 		close(done)
 	}()
 	return done, &output, &err
@@ -113,13 +114,19 @@ func waitForLockWaiter(conn *dbconn.DBConn, schema string, table string, mode st
 	Fail(fmt.Sprintf("no session queued for %s on %s.%s within 30s", mode, schema, table))
 }
 
-// runLeafPartitionBackup runs gpbackup with --leaf-partition-data (so the AO
-// modcount queries run) and returns its combined output and exit error.
-func runLeafPartitionBackup() (string, error) {
-	cmd := exec.Command(gpbackupPath, "--verbose", "--dbname", "testdb",
-		"--backup-dir", backupDir, "--leaf-partition-data")
+// runBackup runs gpbackup with the given extra flags and returns its combined
+// output and exit error.
+func runBackup(extraArgs ...string) (string, error) {
+	args := append([]string{"--verbose", "--dbname", "testdb", "--backup-dir", backupDir}, extraArgs...)
+	cmd := exec.Command(gpbackupPath, args...)
 	output, err := cmd.CombinedOutput()
 	return string(output), err
+}
+
+// runLeafPartitionBackup runs gpbackup with --leaf-partition-data, so the AO
+// modcount queries run.
+func runLeafPartitionBackup() (string, error) {
+	return runBackup("--leaf-partition-data")
 }
 
 func readTOC(timestamp string) *toc.TOC {
@@ -177,7 +184,7 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		// today produces an empty table in the backup with no error at all.
 		rewriter := holdRewrite(`ALTER TABLE schema2.ao1 SET WITH (reorganize=true);
 			ALTER TABLE public.foo SET WITH (reorganize=true)`)
-		done, output, err := startBackup()
+		done, output, err := startBackup("--leaf-partition-data")
 		defer waitForBackupExit(done)
 		defer releaseRewrite(rewriter)
 
@@ -217,7 +224,7 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		rewriter := holdRewrite(`TRUNCATE schema2.ao2; INSERT INTO schema2.ao2 SELECT generate_series(1, 5)`)
 		defer testhelper.AssertQueryRuns(backupConn,
 			"TRUNCATE schema2.ao2; INSERT INTO schema2.ao2 SELECT generate_series(1, 1000)")
-		done, output, err := startBackup()
+		done, output, err := startBackup("--leaf-partition-data")
 		defer waitForBackupExit(done)
 		defer releaseRewrite(rewriter)
 
@@ -247,7 +254,7 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 			INSERT INTO schema2.ao1 SELECT generate_series(1, 7)`)
 		defer testhelper.AssertQueryRuns(backupConn,
 			"TRUNCATE schema2.ao1; INSERT INTO schema2.ao1 SELECT generate_series(1, 1000)")
-		done, output, err := startBackup()
+		done, output, err := startBackup("--leaf-partition-data")
 		defer waitForBackupExit(done)
 		defer releaseRewrite(rewriter)
 
@@ -270,6 +277,40 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		assertDataRestored(restoreConn, map[string]int{"schema2.ao1": 7})
 	})
 
+	It("retries when a partition is truncated while the backup copies the parent", func() {
+		// Without --leaf-partition-data the parent is locked and copied and the
+		// partitions are only reached through it. Truncate and reload one
+		// partition so its storage changes while the row count stays the same.
+		truncate := "TRUNCATE schema2.returns_1_prt_jan17"
+		if backupConn.Version.Before("7") {
+			truncate = "ALTER TABLE schema2.returns TRUNCATE PARTITION jan17"
+		}
+		rewriter := holdRewrite(fmt.Sprintf(`CREATE TEMP TABLE saved_jan17 AS SELECT * FROM schema2.returns_1_prt_jan17;
+			%s; INSERT INTO schema2.returns SELECT * FROM saved_jan17`, truncate))
+		done, output, err := startBackup()
+		defer waitForBackupExit(done)
+		defer releaseRewrite(rewriter)
+
+		waitForBackupLockWait(backupConn)
+		rewriter.MustCommit()
+		waitForBackupExit(done)
+
+		Expect(*err).ToNot(HaveOccurred(), *output)
+		Expect(*output).To(ContainSubstring("Backup completed successfully"))
+		Expect(*output).ToNot(ContainSubstring("[CRITICAL]"))
+		Expect(*output).To(ContainSubstring(changedTableWarning))
+		Expect(*output).To(ContainSubstring("schema2.returns_1_prt_jan17"))
+		Expect(*output).ToNot(ContainSubstring(dataSkippedWarning))
+
+		timestamp := getBackupTimestamp(*output)
+		tocStruct := readTOC(timestamp)
+		Expect(findDataEntry(tocStruct, "schema2", "returns").RowsCopied).To(Equal(int64(6)))
+
+		gprestore(gprestorePath, restoreHelperPath, timestamp,
+			"--redirect-db", "restoredb", "--backup-dir", backupDir)
+		assertDataRestored(restoreConn, map[string]int{"schema2.returns": 6})
+	})
+
 	It("skips the data of a table that keeps changing after every attempt, keeps its DDL, and completes", func() {
 		// Each attempt must find the table rewritten again. Queue the next
 		// rewrite behind the current one before releasing it: gpbackup's
@@ -278,7 +319,7 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		// the queued rewrite start and block the next attempt.
 		const attempts = 3
 		rewriter := holdRewrite("ALTER TABLE schema2.ao1 SET WITH (reorganize=true)")
-		done, output, err := startBackup()
+		done, output, err := startBackup("--leaf-partition-data")
 		defer waitForBackupExit(done)
 		defer releaseRewrite(rewriter)
 

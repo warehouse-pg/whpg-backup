@@ -238,7 +238,7 @@ func RetrieveAndProcessTables() ([]Table, []Table) {
 
 	metadataTables, dataTables := SplitTablesByPartitionType(regularTables, IncludedRelationFqns)
 	dataTables = append(dataTables, configDumpTables...)
-	dataTables = removeSkippedDataTables(dataTables)
+	dataTables = removeChangedDataTables(dataTables)
 	objectCounts["Tables"] = len(metadataTables)
 
 	return metadataTables, dataTables
@@ -248,15 +248,18 @@ func RetrieveAndProcessTables() ([]Table, []Table) {
  * lockBackupSet resolves the tables in the backup set and takes ACCESS SHARE
  * locks on them. The catalog is read under the backup snapshot, but LOCK TABLE
  * resolves names against the live catalog, so a table rewritten (ALTER TABLE
- * ... SET WITH (REORGANIZE=true), SET DISTRIBUTED BY, VACUUM FULL), truncated,
- * or dropped and recreated between the two can no longer be read consistently
- * under the snapshot: its old storage is gone. Nothing can change once the
- * locks are held, so the set is verified after locking. If a table changed,
- * the snapshot and the resolution are redone, up to maxSnapshotAttempts times.
- * Tables still changing after the last attempt keep their DDL in the backup
- * but their data is skipped, with a warning.
+ * ... SET WITH (REORGANIZE=true), SET DISTRIBUTED BY, VACUUM FULL of a heap
+ * table), truncated, or dropped and recreated between the two can no longer
+ * be read consistently under the snapshot: its old storage is gone. Nothing
+ * can change once the locks are held, so the set, partitions included, is
+ * verified after locking. If anything changed, the snapshot and the
+ * resolution are redone, up to maxSnapshotAttempts times. Relations still
+ * changing after the last attempt are recorded so that their data, and the
+ * data of the locked tables above them, is left out of the backup with a
+ * warning; whatever metadata the backup carries for them is unaffected.
  */
 func lockBackupSet() ([]Relation, []Relation, map[uint32]string) {
+	tablesChangedSinceSnapshot = make(map[string]bool)
 	skippedDataTables = make(map[string]bool)
 	for attempt := 1; ; attempt++ {
 		includedRelations := GetIncludedUserTableRelations(connectionPool, IncludedRelationFqns)
@@ -280,9 +283,14 @@ func lockBackupSet() ([]Relation, []Relation, map[uint32]string) {
 
 		if attempt >= maxSnapshotAttempts {
 			for _, relation := range changedRelations {
-				gplog.Warn("Data for table %s not backed up: the table was %s after the backup snapshot was taken "+
-					"and was still changing after %d attempt(s). Its DDL is backed up.", relation.FQN(), relation.Reason(), attempt)
-				skippedDataTables[relation.FQN()] = true
+				gplog.Warn("Table %s changed on disk after the backup snapshot was taken and was still changing "+
+					"after %d attempt(s); its data will not be backed up.", relation.Describe(), attempt)
+				tablesChangedSinceSnapshot[relation.FQN()] = true
+				for _, ancestor := range relation.Ancestors {
+					if !tablesChangedSinceSnapshot[ancestor.FQN()] {
+						tablesChangedSinceSnapshot[ancestor.FQN()] = false
+					}
+				}
 			}
 			return tableRelations, configDumpRelations, configDumpFilterConds
 		}
@@ -332,27 +340,76 @@ func restartBackupTransactions() {
 		SetSessionGUCs(connNum)
 	}
 
-	if filterOptions == nil {
-		return
-	}
+	IncludedRelationFqns = resolveRelationOids(IncludedRelationFqns)
+	ExcludedRelationFqns = resolveRelationOids(ExcludedRelationFqns)
 	SetFilterRelationClause("")
-	ValidateAndProcessFilterLists(filterOptions)
-	includeOids := GetOidsFromRelationList(IncludedRelationFqns)
-	err := ExpandIncludesForPartitions(connectionPool, filterOptions, includeOids, cmdFlags)
-	gplog.FatalOnError(err)
 }
 
-// removeSkippedDataTables drops the tables whose data is not backed up from
-// the data backup set; they stay in the metadata backup set.
-func removeSkippedDataTables(dataTables []Table) []Table {
-	if len(skippedDataTables) == 0 {
+/*
+ * resolveRelationOids looks the given relations up again by name under the
+ * current snapshot and returns them with their current OIDs, in the same
+ * order. The names were validated and expanded to partitions when the backup
+ * started, so only the OIDs can be stale: a table dropped and recreated under
+ * the same name gets its new OID, and a name that no longer exists is dropped
+ * from the list.
+ */
+func resolveRelationOids(relations []options.Relation) []options.Relation {
+	if len(relations) == 0 {
+		return relations
+	}
+	current := make(map[string]options.Relation, len(relations))
+	for start := 0; start < len(relations); start += changedRelationsBatchSize {
+		end := start + changedRelationsBatchSize
+		if end > len(relations) {
+			end = len(relations)
+		}
+		names := make([]string, 0, end-start)
+		for _, relation := range relations[start:end] {
+			names = append(names, fmt.Sprintf("('%s', '%s')",
+				utils.EscapeSingleQuotes(relation.Schema), utils.EscapeSingleQuotes(relation.Name)))
+		}
+		query := fmt.Sprintf(`
+	SELECT n.oid AS schemaoid,
+		c.oid,
+		n.nspname AS schema,
+		c.relname AS name
+	FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+	WHERE (n.nspname, c.relname) IN (%s)`, strings.Join(names, ", "))
+		results := make([]options.Relation, 0)
+		err := connectionPool.Select(&results, query)
+		gplog.FatalOnError(err)
+		for _, result := range results {
+			current[result.Schema+"."+result.Name] = result
+		}
+	}
+
+	resolved := make([]options.Relation, 0, len(relations))
+	for _, relation := range relations {
+		if found, ok := current[relation.Schema+"."+relation.Name]; ok {
+			resolved = append(resolved, found)
+		} else {
+			gplog.Verbose("Table %s no longer exists under the new snapshot", utils.MakeFQN(relation.Schema, relation.Name))
+		}
+	}
+	return resolved
+}
+
+// removeChangedDataTables takes the tables that changed on disk since the
+// snapshot, or that have a partition that did, out of the data backup set. A
+// table is removed here only; nothing else about it is touched.
+func removeChangedDataTables(dataTables []Table) []Table {
+	if len(tablesChangedSinceSnapshot) == 0 {
 		return dataTables
 	}
 	kept := make([]Table, 0, len(dataTables))
 	for _, table := range dataTables {
-		if !skippedDataTables[table.FQN()] {
-			kept = append(kept, table)
+		if _, changed := tablesChangedSinceSnapshot[table.FQN()]; changed {
+			gplog.Warn("Data for table %s not backed up.", table.FQN())
+			skippedDataTables[table.FQN()] = true
+			continue
 		}
+		kept = append(kept, table)
 	}
 	return kept
 }
