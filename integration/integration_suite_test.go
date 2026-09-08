@@ -139,12 +139,18 @@ var _ = AfterSuite(func() {
 			Fail("Could not remove /tmp/testdir* directories on 1 or more hosts")
 		}
 	}
+	connection1 := testutils.SetupTestDbConn("template1")
 	if connectionPool != nil {
 		connectionPool.Close()
+		// The pool's client connections are closed above, but the server
+		// backends exit asynchronously and an idle one can linger. DROP
+		// DATABASE waits only about five seconds for other backends before it
+		// fails, so terminate any backend still on testdb first, from this
+		// template1 connection, to keep dropdb from racing that timeout.
+		_, _ = connection1.Exec("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'testdb' AND pid <> pg_backend_pid()")
 		err := exec.Command("dropdb", "testdb").Run()
 		Expect(err).To(BeNil())
 	}
-	connection1 := testutils.SetupTestDbConn("template1")
 	testhelper.AssertQueryRuns(connection1, "DROP ROLE testrole")
 	testhelper.AssertQueryRuns(connection1, "DROP ROLE anothertestrole")
 	connection1.Close()
