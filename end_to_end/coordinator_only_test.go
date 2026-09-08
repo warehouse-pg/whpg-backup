@@ -344,29 +344,47 @@ var _ = Describe("coordinator-only table end to end tests", func() {
 		fullTimestamp := getBackupTimestamp(string(output))
 		Expect(fullTimestamp).ToNot(BeEmpty())
 
-		// Change one AO table and leave the other alone, so this fails both if
-		// the modcount never moves and if it reads as changed unconditionally.
-		testhelper.AssertQueryRuns(backupConn, fmt.Sprintf(
-			"INSERT INTO public.co_ao VALUES (%d, 'incremental');", coordinatorOnlyRowCount+1))
+		/*
+		 * Take one incremental per AO storage type, each changing only its own
+		 * table.  getAOSegTableFQNs() resolves ao_row and ao_column through
+		 * different segment relations, so each needs its own changed-path
+		 * assertion -- and asserting that the other table is absent from the
+		 * same backup keeps a negative control for both, failing if a modcount
+		 * ever reads as changed unconditionally.
+		 */
+		previousTimestamp := fullTimestamp
+		for _, changedTable := range []string{"public.co_ao", "public.co_aoco"} {
+			unchangedTable := "public.co_aoco"
+			if changedTable == unchangedTable {
+				unchangedTable = "public.co_ao"
+			}
 
-		output = gpbackup(gpbackupPath, backupHelperPath,
-			coordinatorOnlyBackupArgs("--backup-dir", backupDir, "--leaf-partition-data",
-				"--incremental", "--from-timestamp", fullTimestamp)...)
-		incrementalTimestamp := getBackupTimestamp(string(output))
-		Expect(incrementalTimestamp).ToNot(BeEmpty())
+			testhelper.AssertQueryRuns(backupConn, fmt.Sprintf(
+				"INSERT INTO %s VALUES (%d, 'incremental');", changedTable, coordinatorOnlyRowCount+1))
 
-		changed := dataEntryFQNsInTOC(backupDir, incrementalTimestamp)
-		Expect(changed).To(ContainElement("public.co_ao"),
-			"the incremental backup did not notice the insert on the coordinator")
-		Expect(changed).ToNot(ContainElement("public.co_aoco"),
-			"the incremental backup re-backed-up an AO table that had not changed")
+			output = gpbackup(gpbackupPath, backupHelperPath,
+				coordinatorOnlyBackupArgs("--backup-dir", backupDir, "--leaf-partition-data",
+					"--incremental", "--from-timestamp", previousTimestamp)...)
+			incrementalTimestamp := getBackupTimestamp(string(output))
+			Expect(incrementalTimestamp).ToNot(BeEmpty())
 
-		gprestore(gprestorePath, restoreHelperPath, incrementalTimestamp,
+			changed := dataEntryFQNsInTOC(backupDir, incrementalTimestamp)
+			Expect(changed).To(ContainElement(changedTable),
+				fmt.Sprintf("the incremental backup did not notice the insert into %s on the coordinator", changedTable))
+			Expect(changed).ToNot(ContainElement(unchangedTable),
+				fmt.Sprintf("the incremental backup re-backed-up %s, which had not changed", unchangedTable))
+
+			previousTimestamp = incrementalTimestamp
+		}
+
+		// Restoring the last incremental pulls the whole chain, so both AO
+		// tables have to arrive with the row each of them gained.
+		gprestore(gprestorePath, restoreHelperPath, previousTimestamp,
 			"--redirect-db", "restoredb",
 			"--backup-dir", backupDir)
 
 		assertCoordinatorOnlyRows(restoreConn, "public.co_ao", coordinatorOnlyRowCount+1)
-		assertCoordinatorOnlyRows(restoreConn, "public.co_aoco", coordinatorOnlyRowCount)
+		assertCoordinatorOnlyRows(restoreConn, "public.co_aoco", coordinatorOnlyRowCount+1)
 		assertCoordinatorOnlyRows(restoreConn, "public.co_heap", coordinatorOnlyRowCount)
 	})
 
