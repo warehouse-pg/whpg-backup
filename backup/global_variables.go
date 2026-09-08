@@ -48,6 +48,18 @@ var (
 	filterRelationClause string
 	quotedRoleNames      map[string]string
 	backupSnapshot       string
+	// How many snapshots lockBackupSet may try before it gives up on tables
+	// that keep changing under it and skips their data.
+	maxSnapshotAttempts = 3
+	// The relations still changing on disk after the last snapshot attempt
+	// and the locked tables above them, by FQN. Their data cannot be read
+	// under the snapshot, and a changed relation's pg_aoseg name is stale.
+	changedRelations map[string]bool
+	// FQNs of the tables left out of the data backup set because of that.
+	skippedDataTables map[string]bool
+	// The filter options the backup started with, kept so the include and
+	// exclude lists can be resolved again under a new snapshot.
+	filterOptions *options.Options
 	/*
 	 * Used for synchronizing DoCleanup.  In DoInit() we increment the group
 	 * and then wait for at least one DoCleanup to finish, either in DoTeardown
@@ -161,6 +173,14 @@ func SetVersion(v string) {
 
 func SetFilterRelationClause(filterClause string) {
 	filterRelationClause = filterClause
+}
+
+func SetMaxSnapshotAttempts(attempts int) {
+	maxSnapshotAttempts = attempts
+}
+
+func GetSkippedDataTables() map[string]bool {
+	return skippedDataTables
 }
 
 func SetQuotedRoleNames(quotedRoles map[string]string) {
