@@ -472,13 +472,10 @@ func GetDistributionPolicies(connectionPool *dbconn.DBConn, relations interface{
 	err := connectionPool.Select(&results, query)
 	gplog.FatalOnError(err)
 	resultMap := make(map[uint32]DistPolicy)
-	// Coordinator-only tables only exist on 7.4 and later; older servers can
-	// never produce this policy, so don't even look at the string there.
-	checkCoordinatorOnly := connectionPool.Version.AtLeast("7.4")
 	for _, result := range results {
-		if checkCoordinatorOnly && result.Policy == toc.CoordinatorOnlyPolicy {
-			result.IsCoordinatorOnly = true
-		}
+		// The policy string is itself the version gate: only 7.4 and later can
+		// return it from pg_get_table_distributedby().
+		result.IsCoordinatorOnly = result.Policy == toc.CoordinatorOnlyPolicy
 		resultMap[result.Oid] = result
 	}
 	return resultMap

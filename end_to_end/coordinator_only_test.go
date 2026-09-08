@@ -27,6 +27,10 @@ import (
 
 const coordinatorOnlyRowCount = 25
 
+// Heap, AO row and AO column, so the specs cover every storage layout a
+// coordinator-only table can have.
+var coordinatorOnlyTableNames = []string{"public.co_heap", "public.co_ao", "public.co_aoco"}
+
 // findCoordinatorOnlyDataFile returns the path of the per-table data file the
 // backup should have written into the coordinator's own backup directory.
 func findCoordinatorOnlyDataFile(backupDir string, timestamp string, oid uint32) []string {
@@ -73,17 +77,34 @@ func createCoordinatorOnlyTables(conn *dbconn.DBConn) {
 		"CREATE TABLE public.co_heap(a int, b text) DISTRIBUTED COORDINATOR ONLY;")
 	testhelper.AssertQueryRuns(conn,
 		"CREATE TABLE public.co_ao(a int, b text) WITH (appendonly=true, orientation=row) DISTRIBUTED COORDINATOR ONLY;")
-	for _, tableName := range []string{"public.co_heap", "public.co_ao"} {
+	testhelper.AssertQueryRuns(conn,
+		"CREATE TABLE public.co_aoco(a int, b text) WITH (appendonly=true, orientation=column) DISTRIBUTED COORDINATOR ONLY;")
+	for _, tableName := range coordinatorOnlyTableNames {
 		testhelper.AssertQueryRuns(conn, fmt.Sprintf(
 			"INSERT INTO %s SELECT i, format('row%%s', i) FROM generate_series(1, %d) i;",
 			tableName, coordinatorOnlyRowCount))
 	}
-	testhelper.AssertQueryRuns(conn, "ANALYZE public.co_heap; ANALYZE public.co_ao;")
+	for _, tableName := range coordinatorOnlyTableNames {
+		testhelper.AssertQueryRuns(conn, fmt.Sprintf("ANALYZE %s;", tableName))
+	}
+}
+
+// coordinatorOnlyBackupArgs returns the given gpbackup flags followed by the
+// --include-table pairs that narrow the backup down to the fixture tables, so
+// the specs do not depend on whatever else the shared testdb has accumulated.
+func coordinatorOnlyBackupArgs(flags ...string) []string {
+	args := make([]string, 0, len(flags)+2*len(coordinatorOnlyTableNames))
+	args = append(args, flags...)
+	for _, tableName := range coordinatorOnlyTableNames {
+		args = append(args, "--include-table", tableName)
+	}
+	return args
 }
 
 func dropCoordinatorOnlyTables(conn *dbconn.DBConn) {
-	conn.Exec("DROP TABLE IF EXISTS public.co_heap;")
-	conn.Exec("DROP TABLE IF EXISTS public.co_ao;")
+	for _, tableName := range coordinatorOnlyTableNames {
+		conn.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s;", tableName))
+	}
 }
 
 /*
@@ -135,7 +156,7 @@ func assertCoordinatorOnlyInTOC(backupDir string, timestamp string, tableNames [
 }
 
 var _ = Describe("coordinator-only table end to end tests", func() {
-	coordinatorOnlyTables := []string{"public.co_heap", "public.co_ao"}
+	coordinatorOnlyTables := coordinatorOnlyTableNames
 
 	BeforeEach(func() {
 		end_to_end_setup()
@@ -154,9 +175,7 @@ var _ = Describe("coordinator-only table end to end tests", func() {
 
 	It("backs up and restores coordinator-only heap and AO tables", func() {
 		output := gpbackup(gpbackupPath, backupHelperPath,
-			"--backup-dir", backupDir,
-			"--include-table", "public.co_heap",
-			"--include-table", "public.co_ao")
+			coordinatorOnlyBackupArgs("--backup-dir", backupDir)...)
 		timestamp := getBackupTimestamp(string(output))
 		Expect(timestamp).ToNot(BeEmpty())
 
@@ -180,10 +199,7 @@ var _ = Describe("coordinator-only table end to end tests", func() {
 		// must not be started -- the backup agent would otherwise block
 		// forever on a pipe that no COPY ever opens.
 		output := gpbackup(gpbackupPath, backupHelperPath,
-			"--backup-dir", backupDir,
-			"--single-data-file",
-			"--include-table", "public.co_heap",
-			"--include-table", "public.co_ao")
+			coordinatorOnlyBackupArgs("--backup-dir", backupDir, "--single-data-file")...)
 		timestamp := getBackupTimestamp(string(output))
 		Expect(timestamp).ToNot(BeEmpty())
 
@@ -208,11 +224,8 @@ var _ = Describe("coordinator-only table end to end tests", func() {
 			coordinatorOnlyRowCount))
 
 		output := gpbackup(gpbackupPath, backupHelperPath,
-			"--backup-dir", backupDir,
-			"--single-data-file",
-			"--include-table", "public.co_heap",
-			"--include-table", "public.co_ao",
-			"--include-table", "public.seg_t")
+			append(coordinatorOnlyBackupArgs("--backup-dir", backupDir, "--single-data-file"),
+				"--include-table", "public.seg_t")...)
 		timestamp := getBackupTimestamp(string(output))
 		Expect(timestamp).ToNot(BeEmpty())
 
@@ -231,9 +244,7 @@ var _ = Describe("coordinator-only table end to end tests", func() {
 		// both SET WITH (REORGANIZE=true) and EXPAND TABLE for it, so a resize
 		// restore must leave its distribution alone.
 		output := gpbackup(gpbackupPath, backupHelperPath,
-			"--backup-dir", backupDir,
-			"--include-table", "public.co_heap",
-			"--include-table", "public.co_ao")
+			coordinatorOnlyBackupArgs("--backup-dir", backupDir)...)
 		timestamp := getBackupTimestamp(string(output))
 		Expect(timestamp).ToNot(BeEmpty())
 
@@ -251,9 +262,27 @@ var _ = Describe("coordinator-only table end to end tests", func() {
 		copyPluginToAllHosts(backupConn, examplePluginExec)
 
 		output := gpbackup(gpbackupPath, backupHelperPath,
-			"--plugin-config", examplePluginTestConfig,
-			"--include-table", "public.co_heap",
-			"--include-table", "public.co_ao")
+			coordinatorOnlyBackupArgs("--plugin-config", examplePluginTestConfig)...)
+		timestamp := getBackupTimestamp(string(output))
+		Expect(timestamp).ToNot(BeEmpty())
+		forceMetadataFileDownloadFromPlugin(backupConn, timestamp)
+
+		gprestore(gprestorePath, restoreHelperPath, timestamp,
+			"--redirect-db", "restoredb",
+			"--plugin-config", examplePluginTestConfig)
+
+		assertCoordinatorOnlyDataRestored(restoreConn, coordinatorOnlyTables)
+	})
+
+	It("backs up and restores coordinator-only tables through a plugin with --single-data-file", func() {
+		// Nothing in this set writes to a segment, so the backup starts no
+		// helpers and uploads no segment TOCs.  The restore must not ask the
+		// plugin for them either -- it used to, and died with "Unable to process
+		// segment TOC files using plugin".
+		copyPluginToAllHosts(backupConn, examplePluginExec)
+
+		output := gpbackup(gpbackupPath, backupHelperPath,
+			coordinatorOnlyBackupArgs("--plugin-config", examplePluginTestConfig, "--single-data-file")...)
 		timestamp := getBackupTimestamp(string(output))
 		Expect(timestamp).ToNot(BeEmpty())
 		forceMetadataFileDownloadFromPlugin(backupConn, timestamp)

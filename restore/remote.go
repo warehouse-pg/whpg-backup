@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/greenplum-db/gpbackup/options"
+	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/pkg/errors"
 	"github.com/warehouse-pg/common-go-libs/cluster"
 	"github.com/warehouse-pg/common-go-libs/gplog"
@@ -95,12 +96,7 @@ func VerifyBackupFileCountOnSegments() {
 
 	// Coordinator-only tables are backed up to a file in the coordinator's own
 	// backup directory, so they contribute nothing to any segment's file count.
-	numSegmentEntries := 0
-	for _, entry := range globalTOC.DataEntries {
-		if !entry.IsCoordinatorOnly {
-			numSegmentEntries++
-		}
-	}
+	numSegmentEntries := toc.NumSegmentDataEntries(globalTOC.DataEntries)
 
 	// these are the file counts for non-resize restores.
 	fileCount := numSegmentEntries

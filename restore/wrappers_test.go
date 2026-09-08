@@ -282,6 +282,18 @@ withstatistics: false
 			err = ioutil.WriteFile(configPath, []byte(sampleBackupConfig), 0777)
 			Expect(err).ToNot(HaveOccurred())
 
+			// Create the TOC for the timestamp in the config's restore plan.
+			// RecoverMetadataFilesUsingPlugin downloads this file and then reads
+			// it to decide whether the backup has any segment data at all; the
+			// executor is mocked here, so the fixture has to stand in for the
+			// download.  A single ordinary data entry keeps the segment TOCs in
+			// play, which is what these specs exercise.
+			planTocDir := filepath.Join(mdd, "backups/20180415/20180415154238/")
+			_ = os.MkdirAll(planTocDir, 0777)
+			err = ioutil.WriteFile(filepath.Join(planTocDir, "gpbackup_20180415154238_toc.yaml"),
+				[]byte("dataentries:\n- schema: public\n  name: test_table\n  oid: 16384\n  iscoordinatoronly: false\n"), 0777)
+			Expect(err).ToNot(HaveOccurred())
+
 			restore.SetVersion("1.11.0+dev.28.g10571fd")
 		})
 		AfterEach(func() {

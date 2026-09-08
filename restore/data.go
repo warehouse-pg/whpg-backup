@@ -266,16 +266,10 @@ func restoreDataFromTimestamp(fpInfo filepath.FilePathInfo, dataEntries []toc.Co
 	 * Coordinator-only entries are read straight from the coordinator's backup
 	 * directory, so they must be left out of the oid list handed to the segment
 	 * helpers, which would otherwise wait forever on pipes that no COPY opens.
-	 * If the backup set contains nothing else there is no segment data to read
-	 * at all, so the helpers are not needed.
+	 * If the set being restored contains nothing else there is no segment data to
+	 * read at all, so the helpers are not needed.
 	 */
-	numSegmentEntries := 0
-	for _, entry := range dataEntries {
-		if !entry.IsCoordinatorOnly {
-			numSegmentEntries++
-		}
-	}
-	if (backupConfig.SingleDataFile || resizeCluster) && numSegmentEntries > 0 {
+	if (backupConfig.SingleDataFile || resizeCluster) && toc.NumSegmentDataEntries(dataEntries) > 0 {
 		msg := ""
 		if backupConfig.SingleDataFile {
 			msg += "single data file "

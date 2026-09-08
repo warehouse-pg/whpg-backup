@@ -57,6 +57,25 @@ type CoordinatorDataEntry struct {
 	IsCoordinatorOnly bool
 }
 
+/*
+ * NumSegmentDataEntries counts the entries that hold data on the segments.
+ *
+ * Coordinator-only tables are written to and read from the coordinator's own
+ * backup directory, so a set made up entirely of them has no segment data
+ * files, no segment TOCs, and nothing for the gpbackup_helper agents to do.
+ * Every place that would otherwise assume "single data file implies per-segment
+ * files exist" has to ask this first.
+ */
+func NumSegmentDataEntries(entries []CoordinatorDataEntry) int {
+	count := 0
+	for _, entry := range entries {
+		if !entry.IsCoordinatorOnly {
+			count++
+		}
+	}
+	return count
+}
+
 type SegmentDataEntry struct {
 	StartByte uint64
 	EndByte   uint64
