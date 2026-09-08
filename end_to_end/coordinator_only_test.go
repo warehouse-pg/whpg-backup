@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	path "path/filepath"
+	"regexp"
 	"strconv"
 
 	"github.com/greenplum-db/gpbackup/history"
@@ -30,6 +31,10 @@ const coordinatorOnlyRowCount = 25
 // Heap, AO row and AO column, so the specs cover every storage layout a
 // coordinator-only table can have.
 var coordinatorOnlyTableNames = []string{"public.co_heap", "public.co_ao", "public.co_aoco"}
+
+// The example plugin appends a line per call here; hardcoded in the plugin, the
+// same way examplePluginTestDir is.
+const examplePluginLogPath = "/tmp/plugin_out.txt"
 
 // findCoordinatorOnlyDataFile returns the path of the per-table data file the
 // backup should have written into the coordinator's own backup directory.
@@ -128,6 +133,74 @@ func assertCoordinatorOnlyDataRestored(conn *dbconn.DBConn, tableNames []string)
 			To(Equal("0"),
 				fmt.Sprintf("rows were restored onto the segments for coordinator-only table %s", tableName))
 	}
+}
+
+/*
+ * assertCoordinatorOnlyRows is assertCoordinatorOnlyDataRestored for a single
+ * table whose row count is not the fixture's, which an incremental restore
+ * produces.  It still checks both sides: visible on the coordinator, absent
+ * from the segments.
+ */
+func assertCoordinatorOnlyRows(conn *dbconn.DBConn, tableName string, expectedRows int) {
+	Expect(dbconn.MustSelectString(conn, fmt.Sprintf(
+		"SELECT count(*) AS string FROM %s", tableName))).
+		To(Equal(strconv.Itoa(expectedRows)),
+			fmt.Sprintf("wrong number of rows visible in %s", tableName))
+	Expect(dbconn.MustSelectString(conn, fmt.Sprintf(
+		"SELECT count(*) AS string FROM gp_dist_random('%s')", tableName))).
+		To(Equal("0"),
+			fmt.Sprintf("rows were restored onto the segments for coordinator-only table %s", tableName))
+}
+
+/*
+ * dataEntryFQNsInTOC returns the tables whose data a given backup actually
+ * carries.  An incremental backup holds data only for the tables it decided had
+ * changed, so this is what says whether the modcount comparison noticed a
+ * coordinator-only AO table's new rows.
+ */
+func dataEntryFQNsInTOC(backupDir string, timestamp string) []string {
+	tocStruct := &toc.TOC{}
+	Expect(yaml.Unmarshal(getMetdataFileContents(backupDir, timestamp, "toc.yaml"), tocStruct)).To(Succeed())
+
+	fqns := make([]string, 0, len(tocStruct.DataEntries))
+	for _, entry := range tocStruct.DataEntries {
+		fqns = append(fqns, fmt.Sprintf("%s.%s", entry.Schema, entry.Name))
+	}
+	return fqns
+}
+
+/*
+ * assertPluginBackedUpDataOnCoordinator reads the example plugin's own call log
+ * to check where its backup_data hook ran from.
+ *
+ * A coordinator-only table's data is piped to the plugin by the COPY on the
+ * coordinator, so the path it is handed carries content -1.  Segment data
+ * reaches the plugin through gpbackup_helper instead, with that segment's
+ * content in the path -- so for a backup set that is entirely coordinator-only
+ * there must be one content -1 call per table and no per-segment call at all.
+ * Backing the data up and restoring it does not on its own show which of the
+ * two routes carried it.
+ */
+func assertPluginBackedUpDataOnCoordinator(timestamp string, numTables int) {
+	contents, err := os.ReadFile(examplePluginLogPath)
+	Expect(err).ToNot(HaveOccurred(), "the example plugin recorded no calls at all")
+
+	coordinatorCalls := regexp.MustCompile(fmt.Sprintf(
+		`(?m)^backup_data \S+ \S*gpbackup_-1_%s_[0-9]+`, timestamp)).
+		FindAllString(string(contents), -1)
+	Expect(coordinatorCalls).To(HaveLen(numTables),
+		"expected the plugin's backup_data to be invoked once per coordinator-only table with a content -1 path")
+
+	segmentCalls := regexp.MustCompile(fmt.Sprintf(
+		`(?m)^backup_data \S+ \S*gpbackup_[0-9]+_%s_`, timestamp)).
+		FindAllString(string(contents), -1)
+	Expect(segmentCalls).To(BeEmpty(),
+		"no segment should have sent data to the plugin for an entirely coordinator-only backup")
+
+	// The upload has to have produced the files, not just made the calls.
+	Expect(path.Glob(path.Join(examplePluginTestDir, timestamp[:8], timestamp,
+		fmt.Sprintf("gpbackup_-1_%s_*", timestamp)))).
+		To(HaveLen(numTables), "the plugin did not store the coordinator's data files")
 }
 
 // assertCoordinatorOnlyInTOC checks that the data entries for the given tables
@@ -258,13 +331,57 @@ var _ = Describe("coordinator-only table end to end tests", func() {
 		assertCoordinatorOnlyDataRestored(restoreConn, coordinatorOnlyTables)
 	})
 
+	It("notices coordinator-side changes to AO tables in an incremental backup", func() {
+		/*
+		 * An AO table is only re-backed-up by an incremental if its modcount or
+		 * DDL timestamp moved.  On 7 and later that modcount is read through
+		 * gp_dist_random(), which is permanently empty for a coordinator-only
+		 * table -- so it would read 0 forever, the table would look unchanged,
+		 * and the incremental would silently carry none of its new rows.
+		 */
+		output := gpbackup(gpbackupPath, backupHelperPath,
+			coordinatorOnlyBackupArgs("--backup-dir", backupDir, "--leaf-partition-data")...)
+		fullTimestamp := getBackupTimestamp(string(output))
+		Expect(fullTimestamp).ToNot(BeEmpty())
+
+		// Change one AO table and leave the other alone, so this fails both if
+		// the modcount never moves and if it reads as changed unconditionally.
+		testhelper.AssertQueryRuns(backupConn, fmt.Sprintf(
+			"INSERT INTO public.co_ao VALUES (%d, 'incremental');", coordinatorOnlyRowCount+1))
+
+		output = gpbackup(gpbackupPath, backupHelperPath,
+			coordinatorOnlyBackupArgs("--backup-dir", backupDir, "--leaf-partition-data",
+				"--incremental", "--from-timestamp", fullTimestamp)...)
+		incrementalTimestamp := getBackupTimestamp(string(output))
+		Expect(incrementalTimestamp).ToNot(BeEmpty())
+
+		changed := dataEntryFQNsInTOC(backupDir, incrementalTimestamp)
+		Expect(changed).To(ContainElement("public.co_ao"),
+			"the incremental backup did not notice the insert on the coordinator")
+		Expect(changed).ToNot(ContainElement("public.co_aoco"),
+			"the incremental backup re-backed-up an AO table that had not changed")
+
+		gprestore(gprestorePath, restoreHelperPath, incrementalTimestamp,
+			"--redirect-db", "restoredb",
+			"--backup-dir", backupDir)
+
+		assertCoordinatorOnlyRows(restoreConn, "public.co_ao", coordinatorOnlyRowCount+1)
+		assertCoordinatorOnlyRows(restoreConn, "public.co_aoco", coordinatorOnlyRowCount)
+		assertCoordinatorOnlyRows(restoreConn, "public.co_heap", coordinatorOnlyRowCount)
+	})
+
 	It("backs up and restores coordinator-only tables through a plugin", func() {
 		copyPluginToAllHosts(backupConn, examplePluginExec)
+		// The plugin appends to its log across the whole suite, so start clean.
+		Expect(os.RemoveAll(examplePluginLogPath)).To(Succeed())
 
 		output := gpbackup(gpbackupPath, backupHelperPath,
 			coordinatorOnlyBackupArgs("--plugin-config", examplePluginTestConfig)...)
 		timestamp := getBackupTimestamp(string(output))
 		Expect(timestamp).ToNot(BeEmpty())
+
+		assertPluginBackedUpDataOnCoordinator(timestamp, len(coordinatorOnlyTables))
+
 		forceMetadataFileDownloadFromPlugin(backupConn, timestamp)
 
 		gprestore(gprestorePath, restoreHelperPath, timestamp,
@@ -280,11 +397,17 @@ var _ = Describe("coordinator-only table end to end tests", func() {
 		// plugin for them either -- it used to, and died with "Unable to process
 		// segment TOC files using plugin".
 		copyPluginToAllHosts(backupConn, examplePluginExec)
+		Expect(os.RemoveAll(examplePluginLogPath)).To(Succeed())
 
 		output := gpbackup(gpbackupPath, backupHelperPath,
 			coordinatorOnlyBackupArgs("--plugin-config", examplePluginTestConfig, "--single-data-file")...)
 		timestamp := getBackupTimestamp(string(output))
 		Expect(timestamp).ToNot(BeEmpty())
+
+		// Even under --single-data-file the coordinator talks to the plugin
+		// itself; there is no helper on the coordinator to do it.
+		assertPluginBackedUpDataOnCoordinator(timestamp, len(coordinatorOnlyTables))
+
 		forceMetadataFileDownloadFromPlugin(backupConn, timestamp)
 
 		gprestore(gprestorePath, restoreHelperPath, timestamp,

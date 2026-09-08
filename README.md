@@ -105,6 +105,28 @@ gprestore --timestamp <YYYYMMDDHHMMSS>
 
 Run `--help` with either command for a complete list of options.
 
+### Coordinator-only tables
+
+A table declared `DISTRIBUTED COORDINATOR ONLY` (WarehousePG 7.4 and later)
+keeps its whole heap on the coordinator; every segment holds an empty relation.
+Its data therefore cannot be moved with `COPY ... ON SEGMENT` the way every
+other table's is, so `gpbackup` and `gprestore` treat these tables differently:
+
+* The coordinator copies their data out and back in itself, to and from a file
+  of its own in the coordinator's backup directory (content `-1`), where the
+  metadata files already live.
+* They are never part of the single data file. `--single-data-file` still gives
+  them a file each, and no `gpbackup_helper` agent is involved in moving their
+  data.
+* Consequently, with `--plugin-config` the plugin's `backup_data` and
+  `restore_data` hooks are invoked **on the coordinator**, and the path they are
+  handed carries content `-1`. A backup whose data set is entirely
+  coordinator-only writes no per-segment data files and no segment TOCs at all.
+* `--resize-cluster` leaves their distribution alone. Their rows belong on the
+  coordinator whatever the segment count, and the server rejects both
+  `ALTER TABLE ... SET WITH (REORGANIZE=true)` and `ALTER TABLE ... EXPAND TABLE`
+  for them.
+
 ## Cleaning up
 
 To remove the compiled binaries and other generated files, run
