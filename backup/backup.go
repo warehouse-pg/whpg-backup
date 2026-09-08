@@ -299,19 +299,29 @@ func backupData(tables []Table) {
 		gplog.Info("Data backup complete")
 		return
 	}
-	if MustGetFlagBool(options.SINGLE_DATA_FILE) {
+	/*
+	 * Coordinator-only tables are copied out on the coordinator into files of
+	 * their own, so they never write to a segment pipe.  They must be left out
+	 * of the oid list, or the backup agent would block forever waiting to read
+	 * a pipe that nobody opens for writing.  If every table in the set is
+	 * coordinator-only there is no segment data at all, so skip the helpers.
+	 */
+	segmentOidList := make([]string, 0, len(tables))
+	for _, table := range tables {
+		if !table.DistPolicy.IsCoordinatorOnly {
+			segmentOidList = append(segmentOidList, fmt.Sprintf("%d", table.Oid))
+		}
+	}
+	useHelpers := MustGetFlagBool(options.SINGLE_DATA_FILE) && len(segmentOidList) > 0
+	if useHelpers {
 		gplog.Verbose("Initializing pipes and gpbackup_helper on segments for single data file backup")
 		utils.VerifyHelperVersionOnSegments(version, globalCluster)
-		oidList := make([]string, 0, len(tables))
-		for _, table := range tables {
-			oidList = append(oidList, fmt.Sprintf("%d", table.Oid))
-		}
-		utils.WriteOidListToSegments(oidList, globalCluster, globalFPInfo, "oid")
+		utils.WriteOidListToSegments(segmentOidList, globalCluster, globalFPInfo, "oid")
 		compressStr := fmt.Sprintf(" --compression-level %d --compression-type %s", MustGetFlagInt(options.COMPRESSION_LEVEL), MustGetFlagString(options.COMPRESSION_TYPE))
 		if MustGetFlagBool(options.NO_COMPRESSION) {
 			compressStr = " --compression-level 0"
 		}
-		initialPipes := CreateInitialSegmentPipes(oidList, globalCluster, connectionPool, globalFPInfo)
+		initialPipes := CreateInitialSegmentPipes(segmentOidList, globalCluster, connectionPool, globalFPInfo)
 		// Do not pass through the --on-error-continue flag or the resizeClusterMap because neither apply to gpbackup
 		utils.StartGpbackupHelpers(globalCluster, globalFPInfo, "--backup-agent",
 			MustGetFlagString(options.PLUGIN_CONFIG), compressStr, false, false, &wasTerminated, initialPipes, true, false, 0, 0, gplog.GetVerbosity())
@@ -319,7 +329,7 @@ func backupData(tables []Table) {
 	gplog.Info("Writing data to file")
 	rowsCopiedMaps := BackupDataForAllTables(tables)
 	AddTableDataEntriesToTOC(tables, rowsCopiedMaps)
-	if MustGetFlagBool(options.SINGLE_DATA_FILE) && MustGetFlagString(options.PLUGIN_CONFIG) != "" {
+	if useHelpers && MustGetFlagString(options.PLUGIN_CONFIG) != "" {
 		pluginConfig.BackupSegmentTOCs(globalCluster, globalFPInfo)
 	}
 	logCompletionMessage("Data backup")

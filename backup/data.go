@@ -69,7 +69,14 @@ func CopyTableOut(connectionPool *dbconn.DBConn, table Table, destinationToWrite
 	checkPipeExistsCommand := ""
 	customPipeThroughCommand := utils.GetPipeThroughProgram().OutputCommand
 	sendToDestinationCommand := ">"
-	if MustGetFlagBool(options.SINGLE_DATA_FILE) {
+	/*
+	 * A coordinator-only table has no rows on any segment, so its data cannot be
+	 * moved with COPY ... ON SEGMENT.  It is copied out on the coordinator with a
+	 * plain COPY, into a file of its own in the coordinator's backup directory,
+	 * which also means it never goes through the segment helper's pipes and so is
+	 * unaffected by --single-data-file.
+	 */
+	if MustGetFlagBool(options.SINGLE_DATA_FILE) && !table.DistPolicy.IsCoordinatorOnly {
 		/*
 		 * The segment TOC files are always written to the segment data directory for
 		 * performance reasons, in case the user-specified directory is on a mounted
@@ -95,6 +102,11 @@ func CopyTableOut(connectionPool *dbconn.DBConn, table Table, destinationToWrite
 		workerInfo = fmt.Sprintf("Worker %d: ", connNum)
 	}
 
+	onSegmentClause := " ON SEGMENT"
+	if table.DistPolicy.IsCoordinatorOnly {
+		onSegmentClause = ""
+	}
+
 	var query string
 	if table.ExtConfigFilterCond != "" {
 		// Extension config dump tables may have a WHERE condition from
@@ -106,10 +118,10 @@ func CopyTableOut(connectionPool *dbconn.DBConn, table Table, destinationToWrite
 			// columnNames is "(col1,col2,...)" — strip the parens for SELECT
 			selectCols = columnNames[1 : len(columnNames)-1]
 		}
-		query = fmt.Sprintf("COPY (SELECT %s FROM %s %s) TO %s WITH CSV DELIMITER '%s' ON SEGMENT IGNORE EXTERNAL PARTITIONS;",
-			selectCols, table.FQN(), table.ExtConfigFilterCond, copyCommand, tableDelim)
+		query = fmt.Sprintf("COPY (SELECT %s FROM %s %s) TO %s WITH CSV DELIMITER '%s'%s IGNORE EXTERNAL PARTITIONS;",
+			selectCols, table.FQN(), table.ExtConfigFilterCond, copyCommand, tableDelim, onSegmentClause)
 	} else {
-		query = fmt.Sprintf("COPY %s%s TO %s WITH CSV DELIMITER '%s' ON SEGMENT IGNORE EXTERNAL PARTITIONS;", table.FQN(), columnNames, copyCommand, tableDelim)
+		query = fmt.Sprintf("COPY %s%s TO %s WITH CSV DELIMITER '%s'%s IGNORE EXTERNAL PARTITIONS;", table.FQN(), columnNames, copyCommand, tableDelim, onSegmentClause)
 	}
 	if connectionPool.Version.AtLeast("7") {
 		utils.LogProgress(`%sExecuting "%s" on coordinator`, workerInfo, query)
@@ -134,7 +146,12 @@ func BackupSingleTableData(table Table, rowsCopiedMap map[uint32]int64, counters
 	utils.LogProgress("%sWriting data for table %s to file (table %d of %d)", workerInfo, table.FQN(), atomic.AddInt64(&counters.NumRegTables, 1), counters.TotalRegTables)
 
 	destinationToWrite := ""
-	if MustGetFlagBool(options.SINGLE_DATA_FILE) {
+	if table.DistPolicy.IsCoordinatorOnly {
+		// The COPY for a coordinator-only table runs without ON SEGMENT, so the
+		// server does not expand the <SEG_DATA_DIR>/<SEGID> placeholders for us.
+		// Resolve them here against content -1, where the metadata files live.
+		destinationToWrite = globalFPInfo.GetTableBackupFilePath(-1, table.Oid, utils.GetPipeThroughProgram().Extension, false)
+	} else if MustGetFlagBool(options.SINGLE_DATA_FILE) {
 		destinationToWrite = fmt.Sprintf("%s_%d", globalFPInfo.GetSegmentPipePathForCopyCommand(), table.Oid)
 	} else {
 		destinationToWrite = globalFPInfo.GetTableBackupFilePathForCopyCommand(table.Oid, utils.GetPipeThroughProgram().Extension, false)

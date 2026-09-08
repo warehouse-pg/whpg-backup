@@ -396,6 +396,11 @@ type DistPolicy struct {
 	Oid        uint32
 	Policy     string `db:"value"`
 	DistByEnum bool   `db:"distbyenum"`
+	// IsCoordinatorOnly is derived from Policy rather than selected, and marks a
+	// DISTRIBUTED COORDINATOR ONLY table (gp_distribution_policy.policytype =
+	// 'e', WHPG 7.4 and later).  The heap of such a table lives only on the
+	// coordinator, so its data cannot be moved with COPY ... ON SEGMENT.
+	IsCoordinatorOnly bool
 }
 
 func GetDistributionPolicies(connectionPool *dbconn.DBConn, relations interface{}) map[uint32]DistPolicy {
@@ -468,6 +473,9 @@ func GetDistributionPolicies(connectionPool *dbconn.DBConn, relations interface{
 	gplog.FatalOnError(err)
 	resultMap := make(map[uint32]DistPolicy)
 	for _, result := range results {
+		// The policy string is itself the version gate: only 7.4 and later can
+		// return it from pg_get_table_distributedby().
+		result.IsCoordinatorOnly = result.Policy == toc.CoordinatorOnlyPolicy
 		resultMap[result.Oid] = result
 	}
 	return resultMap

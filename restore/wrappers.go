@@ -246,6 +246,18 @@ func RecoverMetadataFilesUsingPlugin() {
 	for _, fpInfo := range fpInfoList {
 		pluginConfig.MustRestoreFile(fpInfo.GetTOCFilePath())
 		if backupConfig.SingleDataFile {
+			/*
+			 * A backup whose whole data set is coordinator-only never started the
+			 * segment helpers, so it has no segment TOCs to fetch and asking the
+			 * plugin for them fails the restore.  The TOC has just been downloaded
+			 * above and globalTOC is not read until BackupConfigurationValidation,
+			 * so read this backup's own copy: with a restore plan each timestamp in
+			 * the chain has to be judged on its own contents.
+			 */
+			if toc.NumSegmentDataEntries(toc.NewTOC(fpInfo.GetTOCFilePath()).DataEntries) == 0 {
+				gplog.Verbose("Backup %s has no segment data; skipping segment TOC restore", fpInfo.Timestamp)
+				continue
+			}
 			origSize, destSize, _, batches := GetResizeClusterInfo()
 			pluginConfig.RestoreSegmentTOCs(globalCluster, fpInfo, origSize, destSize, batches)
 		}

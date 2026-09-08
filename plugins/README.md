@@ -260,6 +260,8 @@ This command should read a potentially large stream of data from stdin and proce
 
 Called by the gpbackup_helper agent process to stream all table data for a segment from the postgres process' stdout to the plugin's stdin. This is a single continuous stream per segment, and can be either compressed or uncompressed depending on flags provided to gpbackup.
 
+There is one exception, on WarehousePG 7.4 and later. A table declared `DISTRIBUTED COORDINATOR ONLY` keeps its whole heap on the coordinator, so its data never passes through a segment helper: the COPY on the coordinator pipes into the plugin directly, once per table, and the [data_filekey](#data_filekey) it is given carries content `-1` rather than a segment's content. A plugin must therefore not assume that `backup_data` is always invoked by a segment helper on a segment host, nor that the content embedded in the path belongs to a segment. Unlike the per-segment stream, these calls are one per table regardless of `--single-data-file`.
+
 **Arguments:**
 
 [config_path](#config_path)
@@ -275,6 +277,11 @@ Called by the gpbackup_helper agent process to stream all table data for a segme
 COPY "<large amount of data>" | test_plugin backup_data /home/test_plugin_config.yaml /data_dir/backups/20180101/20180101010101/gpbackup_0_20180101010101
 ```
 
+For a `DISTRIBUTED COORDINATOR ONLY` table, invoked on the coordinator with content `-1` and the table's oid:
+```
+COPY "<table data>" | test_plugin backup_data /home/test_plugin_config.yaml /data_dir/backups/20180101/20180101010101/gpbackup_-1_20180101010101_16384
+```
+
 ### [restore_data](#restore_data)
 
 This command should read a potentially large data file specified by the filepath argument from the remote filesystem and process/write the contents to stdout. The data file in the restore system should have the same name as the filepath argument.
@@ -282,6 +289,8 @@ This command should read a potentially large data file specified by the filepath
 **Usage within gprestore:**
 
 Called by the gpbackup_helper agent process to stream all table data for a segment from the remote system to be processed by the agent. If the backup_data command modified the data format (compression or otherwise), restore_data should perform the reverse operation before sending the data to gprestore.
+
+The same exception as [backup_data](#backup_data) applies: for a `DISTRIBUTED COORDINATOR ONLY` table, `restore_data` is invoked directly by the COPY on the coordinator, once per table, with a content `-1` [data_filekey](#data_filekey), and no segment helper is involved. Because nothing else reverses the format for these calls, whatever `backup_data` wrote on the coordinator is what `restore_data` has to undo there.
 
 **Arguments:**
 
@@ -294,6 +303,11 @@ Called by the gpbackup_helper agent process to stream all table data for a segme
 **Example:**
 ```
 test_plugin restore_data /home/test_plugin_config.yaml /data_dir/backups/20180101/20180101010101/gpbackup_0_20180101010101 > COPY ...
+```
+
+For a `DISTRIBUTED COORDINATOR ONLY` table, invoked on the coordinator:
+```
+test_plugin restore_data /home/test_plugin_config.yaml /data_dir/backups/20180101/20180101010101/gpbackup_-1_20180101010101_16384 > COPY ...
 ```
 ### [plugin_api_version](#plugin_api_version)
 

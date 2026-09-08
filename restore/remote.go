@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/greenplum-db/gpbackup/options"
+	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/pkg/errors"
 	"github.com/warehouse-pg/common-go-libs/cluster"
 	"github.com/warehouse-pg/common-go-libs/gplog"
@@ -93,10 +94,14 @@ func VerifyBackupFileCountOnSegments() {
 		return "Could not verify backup file count"
 	})
 
+	// Coordinator-only tables are backed up to a file in the coordinator's own
+	// backup directory, so they contribute nothing to any segment's file count.
+	numSegmentEntries := toc.NumSegmentDataEntries(globalTOC.DataEntries)
+
 	// these are the file counts for non-resize restores.
-	fileCount := 2 // 1 for the actual data file, 1 for the segment TOC file
-	if !backupConfig.SingleDataFile {
-		fileCount = len(globalTOC.DataEntries)
+	fileCount := numSegmentEntries
+	if backupConfig.SingleDataFile && numSegmentEntries > 0 {
+		fileCount = 2 // 1 for the actual data file, 1 for the segment TOC file
 	}
 
 	batchMap := make(map[int]int, len(remoteOutput.Commands))

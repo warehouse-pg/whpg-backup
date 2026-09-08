@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/greenplum-db/gpbackup/history"
@@ -228,6 +229,34 @@ withstatistics: false
 		var mdd string
 		var tempDir string
 
+		// writeTOCFixture writes the coordinator TOC for one backup timestamp,
+		// holding a single data entry that is either coordinator-only or not.
+		writeTOCFixture := func(timestamp string, isCoordinatorOnly bool) {
+			tocDir := filepath.Join(mdd, "backups", timestamp[:8], timestamp)
+			Expect(os.MkdirAll(tocDir, 0777)).To(Succeed())
+			contents := fmt.Sprintf("dataentries:\n- schema: public\n  name: test_table\n"+
+				"  oid: 16384\n  iscoordinatoronly: %t\n", isCoordinatorOnly)
+			Expect(ioutil.WriteFile(filepath.Join(tocDir,
+				fmt.Sprintf("gpbackup_%s_toc.yaml", timestamp)), []byte(contents), 0777)).To(Succeed())
+		}
+
+		// segmentTOCCommandsFor returns the segment TOC restore commands the
+		// mocked cluster executor was asked to run for one backup timestamp.
+		// Only RestoreSegmentTOCs issues these: they name a segment's own TOC
+		// file, gpbackup_<content>_<timestamp>_toc.yaml.
+		segmentTOCCommandsFor := func(timestamp string) []string {
+			pattern := regexp.MustCompile(fmt.Sprintf("gpbackup_[0-9]+_%s_toc.yaml", timestamp))
+			matched := make([]string, 0)
+			for _, batch := range executor.ClusterCommands {
+				for _, shellCommand := range batch {
+					if pattern.MatchString(shellCommand.CommandString) {
+						matched = append(matched, shellCommand.CommandString)
+					}
+				}
+			}
+			return matched
+		}
+
 		BeforeEach(func() {
 			tempDir, _ = ioutil.TempDir("", "temp")
 
@@ -282,6 +311,14 @@ withstatistics: false
 			err = ioutil.WriteFile(configPath, []byte(sampleBackupConfig), 0777)
 			Expect(err).ToNot(HaveOccurred())
 
+			// Create the TOC for the timestamp in the config's restore plan.
+			// RecoverMetadataFilesUsingPlugin downloads this file and then reads
+			// it to decide whether the backup has any segment data at all; the
+			// executor is mocked here, so the fixture has to stand in for the
+			// download.  A single ordinary data entry keeps the segment TOCs in
+			// play, which is what these specs exercise.
+			writeTOCFixture("20180415154238", false)
+
 			restore.SetVersion("1.11.0+dev.28.g10571fd")
 		})
 		AfterEach(func() {
@@ -309,6 +346,36 @@ withstatistics: false
 				_ = cmdFlags.Set(options.TIMESTAMP, "20170415154408")
 				restore.RecoverMetadataFilesUsingPlugin()
 				Expect(string(logfile.Contents())).To(ContainSubstring("cannot recover plugin version"))
+			})
+			It("restores segment TOCs only for the timestamps in the restore plan that have segment data", func() {
+				// The decision is made per TOC, so a restore plan can legitimately
+				// need the segment TOCs for one of its timestamps and not the
+				// other: an incremental chain where one backup happens to hold
+				// nothing but coordinator-only tables.
+				const withSegmentData = "20180415154238"
+				const coordinatorOnly = "20190415154238"
+
+				configPath := filepath.Join(mdd, "backups/20170101/20170101010101/",
+					"gpbackup_20170101010101_config.yaml")
+				config := history.ReadConfigFile(configPath)
+				config.SingleDataFile = true
+				config.RestorePlan = []history.RestorePlanEntry{
+					{Timestamp: withSegmentData, TableFQNs: []string{"public.test_table"}},
+					{Timestamp: coordinatorOnly, TableFQNs: []string{"public.co_table"}},
+				}
+				history.WriteConfigFile(config, configPath)
+
+				writeTOCFixture(withSegmentData, false)
+				writeTOCFixture(coordinatorOnly, true)
+
+				executor.ClusterCommands = nil
+				_ = cmdFlags.Set(options.TIMESTAMP, withSegmentData)
+				restore.RecoverMetadataFilesUsingPlugin()
+
+				Expect(segmentTOCCommandsFor(withSegmentData)).ToNot(BeEmpty(),
+					"the backup holding segment data still needs its segment TOCs")
+				Expect(segmentTOCCommandsFor(coordinatorOnly)).To(BeEmpty(),
+					"the coordinator-only backup never wrote segment TOCs, so none should be requested")
 			})
 		})
 		Describe("FindHistoricalPluginVersion", func() {

@@ -195,6 +195,32 @@ var _ = Describe("utils/toc tests", func() {
 			})
 		})
 	})
+	Describe("NumSegmentDataEntries", func() {
+		It("counts nothing for an empty set", func() {
+			Expect(toc.NumSegmentDataEntries(nil)).To(Equal(0))
+		})
+		It("counts ordinary entries", func() {
+			entries := []toc.CoordinatorDataEntry{{Name: "t1"}, {Name: "t2"}}
+			Expect(toc.NumSegmentDataEntries(entries)).To(Equal(2))
+		})
+		It("does not count coordinator-only entries", func() {
+			entries := []toc.CoordinatorDataEntry{
+				{Name: "t1"},
+				{Name: "co1", IsCoordinatorOnly: true},
+				{Name: "co2", IsCoordinatorOnly: true},
+			}
+			Expect(toc.NumSegmentDataEntries(entries)).To(Equal(1))
+		})
+		It("returns zero when every entry is coordinator-only", func() {
+			// This is what tells the callers there are no segment data files,
+			// segment TOCs, or helper agents involved in the backup at all.
+			entries := []toc.CoordinatorDataEntry{
+				{Name: "co1", IsCoordinatorOnly: true},
+				{Name: "co2", IsCoordinatorOnly: true},
+			}
+			Expect(toc.NumSegmentDataEntries(entries)).To(Equal(0))
+		})
+	})
 	Describe("GetDataEntriesMatching", func() {
 		BeforeEach(func() {
 			tocfile.AddCoordinatorDataEntry("schema1", "table1", 1, "(i)", 0, "", "", false)
