@@ -153,6 +153,17 @@ sequences   1
 tables      42
 types       1000`))
 		})
+		It("lists the tables whose data was not backed up in a paragraph of their own", func() {
+			backupReport.SkippedDataTables = []string{"public.ao_t", "public.heap_t"}
+			backupReport.WriteBackupReportFile("filename", timestamp, endtime, objectCounts, "Cannot access /tmp/backups: Permission denied")
+			Expect(buffer).To(Say(`backup status:         Failure
+backup error:          Cannot access /tmp/backups: Permission denied
+
+data not backed up:    public\.ao_t, public\.heap_t
+
+database size:         42 MB
+segment count:         3`))
+		})
 		It("writes a report without database size information", func() {
 			backupReport.DatabaseSize = ""
 			backupReport.WriteBackupReportFile("filename", timestamp, endtime, objectCounts, "")
