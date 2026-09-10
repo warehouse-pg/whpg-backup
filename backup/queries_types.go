@@ -497,6 +497,8 @@ type Collation struct {
 	Ctype           string
 	Provider        string
 	IsDeterministic string
+	Locale          string // WHPG19+
+	IcuRules        string // WHPG19+
 }
 
 func (c Collation) GetMetadataEntry() (string, toc.MetadataEntry) {
@@ -543,9 +545,29 @@ func GetCollations(connectionPool *dbconn.DBConn) []Collation {
         	JOIN pg_namespace n ON c.collnamespace = n.oid
         WHERE %s`, SchemaFilterClause("n"))
 
+	// PG17+ (WHPG19) keeps a non-libc collation's locale in colllocale and
+	// leaves collcollate/collctype NULL, so the query above would fail outright
+	// on an ICU or builtin collation rather than merely lose the locale.  ICU
+	// collations may also carry custom tailoring in collicurules.
+	atLeast19Query := fmt.Sprintf(`
+        SELECT c.oid,
+        	quote_ident(n.nspname) AS schema,
+        	quote_ident(c.collname) AS name,
+        	coalesce(c.collcollate, '') AS collate,
+        	coalesce(c.collctype, '') AS ctype,
+        	coalesce(c.colllocale, '') AS locale,
+        	coalesce(c.collicurules, '') AS icurules,
+        	c.collprovider as provider,
+        	c.collisdeterministic as IsDeterministic
+        FROM pg_collation c
+        	JOIN pg_namespace n ON c.collnamespace = n.oid
+        WHERE %s`, SchemaFilterClause("n"))
+
 	query := ""
 	if connectionPool.Version.Before("7") {
 		query = before7Query
+	} else if connectionPool.Version.AtLeast("19") {
+		query = atLeast19Query
 	} else {
 		query = atLeast7Query
 	}
