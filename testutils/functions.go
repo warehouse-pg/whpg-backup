@@ -561,6 +561,27 @@ func SkipIfBefore7(connectionPool *dbconn.DBConn) {
 	}
 }
 
+// SkipIfNoS3Protocol skips a spec that needs the s3 external protocol library.
+// Six specs declare functions as '$libdir/gps3ext.so', and CREATE FUNCTION ...
+// LANGUAGE C validates that the library exists and exports the symbol, so a
+// stub will not do. WHPG19 does not ship it: warehouse-pg-next has no
+// gpcontrib/gpcloud. Drop this helper once it ships there again.
+func SkipIfNoS3Protocol(connectionPool *dbconn.DBConn) {
+	if connectionPool.Version.AtLeast("19") {
+		Skip("s3 protocol fixture library gps3ext.so is not available on WHPG19")
+	}
+}
+
+// SkipIfLanguagesAreExtensionManaged skips a spec that creates or drops a
+// procedural language standalone. WHPG19 ships plpython3u as a real extension,
+// so CREATE LANGUAGE auto-converts to CREATE EXTENSION and a plain DROP
+// LANGUAGE then fails; GPDB6/7 do not package it that way.
+func SkipIfLanguagesAreExtensionManaged(connectionPool *dbconn.DBConn) {
+	if connectionPool.Version.AtLeast("19") {
+		Skip("procedural languages are extension-managed on WHPG19")
+	}
+}
+
 func InitializeTestTOC(buffer io.Writer, which string) (*toc.TOC, *utils.FileWithByteCount) {
 	tocfile := &toc.TOC{}
 	tocfile.InitializeMetadataEntryMap()

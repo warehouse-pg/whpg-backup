@@ -170,6 +170,7 @@ var _ = Describe("backup integration create statement tests", func() {
 		}
 
 		It("creates a trusted protocol with a read function, privileges, and an owner", func() {
+			testutils.SkipIfNoS3Protocol(connectionPool)
 			protoMetadata := backup.ObjectMetadata{Privileges: []backup.ACL{{Grantee: "testrole", Select: true, Insert: true}}, Owner: "testrole"}
 
 			backup.PrintCreateExternalProtocolStatement(backupfile, tocfile, protocolReadOnly, funcInfoMap, protoMetadata)
@@ -186,6 +187,7 @@ var _ = Describe("backup integration create statement tests", func() {
 			structmatcher.ExpectStructsToMatchExcluding(&protocolReadOnly, &resultExternalProtocols[0], "Oid", "ReadFunction", "FuncMap")
 		})
 		It("creates a protocol with a write function", func() {
+			testutils.SkipIfNoS3Protocol(connectionPool)
 			backup.PrintCreateExternalProtocolStatement(backupfile, tocfile, protocolWriteOnly, funcInfoMap, emptyMetadata)
 
 			testhelper.AssertQueryRuns(connectionPool, "CREATE OR REPLACE FUNCTION public.write_to_s3() RETURNS integer AS '$libdir/gps3ext.so', 's3_export' LANGUAGE C STABLE;")
@@ -200,6 +202,7 @@ var _ = Describe("backup integration create statement tests", func() {
 			structmatcher.ExpectStructsToMatchExcluding(&protocolWriteOnly, &resultExternalProtocols[0], "Oid", "WriteFunction", "FuncMap")
 		})
 		It("creates a protocol with a read and write function", func() {
+			testutils.SkipIfNoS3Protocol(connectionPool)
 			backup.PrintCreateExternalProtocolStatement(backupfile, tocfile, protocolReadWrite, funcInfoMap, emptyMetadata)
 
 			testhelper.AssertQueryRuns(connectionPool, "CREATE OR REPLACE FUNCTION public.read_from_s3() RETURNS integer AS '$libdir/gps3ext.so', 's3_import' LANGUAGE C STABLE;")

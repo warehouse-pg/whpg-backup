@@ -77,6 +77,17 @@ func forceMetadataFileDownloadFromPlugin(conn *dbconn.DBConn, timestamp string) 
 	}
 }
 
+// gpdb4ObjectsFile picks the shared GPDB4 fixture, or the WHPG19 variant of it.
+// PG19 dropped postfix operators, the legacy operator-class RECHECK keyword and
+// the MULE_INTERNAL encoding, so three statements in the shared file do not
+// parse there; resources/gpdb4_objects_whpg19.sql carries the substitutions.
+func gpdb4ObjectsFile(conn *dbconn.DBConn) string {
+	if conn.Version.AtLeast("19") {
+		return "resources/gpdb4_objects_whpg19.sql"
+	}
+	return "resources/gpdb4_objects.sql"
+}
+
 var _ = Describe("End to End plugin tests", func() {
 	BeforeEach(func() {
 		end_to_end_setup()
@@ -172,11 +183,20 @@ var _ = Describe("End to End plugin tests", func() {
 			if backupConn.Version.AtLeast("7") {
 				plpythonDropStatement = "DROP PROCEDURAL LANGUAGE IF EXISTS plpython3u;"
 			}
+			if backupConn.Version.AtLeast("19") {
+				// WHPG19 ships plpython3u as a real extension (control file
+				// and all), so CREATE LANGUAGE plpython3u auto-converts to
+				// CREATE EXTENSION plpython3u; plain DROP LANGUAGE then fails
+				// ("cannot drop language ... because extension ... requires
+				// it"). GPDB6/7 don't package it as an extension, so DROP
+				// LANGUAGE works fine there.
+				plpythonDropStatement = "DROP EXTENSION IF EXISTS plpython3u CASCADE;"
+			}
 			testhelper.AssertQueryRuns(backupConn, plpythonDropStatement)
 			defer testhelper.AssertQueryRuns(backupConn, plpythonDropStatement)
 			defer testhelper.AssertQueryRuns(restoreConn, plpythonDropStatement)
 
-			testutils.ExecuteSQLFile(backupConn, "resources/gpdb4_objects.sql")
+			testutils.ExecuteSQLFile(backupConn, gpdb4ObjectsFile(backupConn))
 			if backupConn.Version.Before("7") {
 				testutils.ExecuteSQLFile(backupConn, "resources/gpdb4_compatible_objects_before_gpdb7.sql")
 			} else {
@@ -237,7 +257,7 @@ var _ = Describe("End to End plugin tests", func() {
 				"CREATE ROLE testrole SUPERUSER")
 			defer testhelper.AssertQueryRuns(backupConn,
 				"DROP ROLE testrole")
-			testutils.ExecuteSQLFile(backupConn, "resources/gpdb4_objects.sql")
+			testutils.ExecuteSQLFile(backupConn, gpdb4ObjectsFile(backupConn))
 			if backupConn.Version.AtLeast("5") {
 				testutils.ExecuteSQLFile(backupConn, "resources/gpdb5_objects.sql")
 			}

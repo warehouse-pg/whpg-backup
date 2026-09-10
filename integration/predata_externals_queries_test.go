@@ -146,6 +146,7 @@ LOG ERRORS PERSISTENTLY SEGMENT REJECT LIMIT 10 PERCENT`)
 	})
 	Describe("GetExternalProtocols", func() {
 		It("returns a slice for a protocol", func() {
+			testutils.SkipIfNoS3Protocol(connectionPool)
 			testhelper.AssertQueryRuns(connectionPool, "CREATE OR REPLACE FUNCTION public.write_to_s3() RETURNS integer AS '$libdir/gps3ext.so', 's3_export' LANGUAGE C STABLE;")
 			defer testhelper.AssertQueryRuns(connectionPool, "DROP FUNCTION public.write_to_s3()")
 			testhelper.AssertQueryRuns(connectionPool, "CREATE OR REPLACE FUNCTION public.read_from_s3() RETURNS integer AS '$libdir/gps3ext.so', 's3_import' LANGUAGE C STABLE;")

@@ -66,6 +66,7 @@ unit_all_gpdb_versions : $(GINKGO)
 		TEST_GPDB_VERSION=5.999.0 ginkgo $(GINKGO_FLAGS) $(SUBDIRS_HAS_UNIT) 2>&1
 		TEST_GPDB_VERSION=6.999.0 ginkgo $(GINKGO_FLAGS) $(SUBDIRS_HAS_UNIT) 2>&1
 		TEST_GPDB_VERSION=7.999.0 ginkgo $(GINKGO_FLAGS) $(SUBDIRS_HAS_UNIT) 2>&1 # GPDB main
+		TEST_GPDB_VERSION=19.999.0 ginkgo $(GINKGO_FLAGS) $(SUBDIRS_HAS_UNIT) 2>&1 # WHPG19
 
 integration : build_test $(GINKGO)
 	ginkgo $(GINKGO_FLAGS) integration 2>&1

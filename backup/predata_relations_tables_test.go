@@ -61,6 +61,7 @@ ENCODING 'UTF-8';`)
 		colWithCollation := backup.ColumnDefinition{Oid: 0, Num: 1, Name: "c", Type: "character (8)", StatTarget: -1, Collation: "public.some_coll"}
 		rowTwoGenerated := backup.ColumnDefinition{Oid: 0, Num: 2, Name: "j", HasDefault: true, Type: "integer", StatTarget: -1, DefaultVal: "(i * 2)", AttGenerated: "STORED"}
 		rowTwoGeneratedInherited := backup.ColumnDefinition{Oid: 0, Num: 2, Name: "j", HasDefault: true, Type: "integer", StatTarget: -1, DefaultVal: "(i * 2)", AttGenerated: "STORED", IsInherited: true}
+		rowTwoGeneratedVirtual := backup.ColumnDefinition{Oid: 0, Num: 2, Name: "j", HasDefault: true, Type: "integer", StatTarget: -1, DefaultVal: "(i * 2)", AttGenerated: "VIRTUAL"}
 
 		Context("No special table attributes", func() {
 			It("prints a CREATE TABLE OF type block with one attribute", func() {
@@ -190,6 +191,16 @@ ALTER TABLE ONLY public.tablename ALTER COLUMN i SET (n_distinct=1);`)
 				testutils.AssertBufferContents(tocfile.PredataEntries, buffer, `CREATE TABLE public.tablename (
 	i integer,
 	j integer GENERATED ALWAYS AS (i * 2) STORED
+) DISTRIBUTED RANDOMLY;`)
+			})
+			It("prints a CREATE TABLE block with a virtual generated attribute", func() {
+				// WHPG19+ (PG18) adds virtual generated columns.
+				col := []backup.ColumnDefinition{rowOne, rowTwoGeneratedVirtual}
+				testTable.ColumnDefs = col
+				backup.PrintRegularTableCreateStatement(backupfile, tocfile, testTable)
+				testutils.AssertBufferContents(tocfile.PredataEntries, buffer, `CREATE TABLE public.tablename (
+	i integer,
+	j integer GENERATED ALWAYS AS (i * 2) VIRTUAL
 ) DISTRIBUTED RANDOMLY;`)
 			})
 			It("prints a CREATE TABLE block that omits the generated attribute if it inherits from another table", func() {
