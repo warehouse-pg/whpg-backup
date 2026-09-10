@@ -217,7 +217,7 @@ func PrintCreateCollationStatements(metadataFile *utils.FileWithByteCount, objTo
 		// reproduce; its single locale comes from colllocale instead, which is
 		// spelled LOCALE in CREATE COLLATION.
 		if collation.Locale != "" {
-			metadataFile.MustPrintf("\nCREATE COLLATION %s (LOCALE = '%s'", collation.FQN(), collation.Locale)
+			metadataFile.MustPrintf("\nCREATE COLLATION %s (LOCALE = '%s'", collation.FQN(), utils.EscapeSingleQuotes(collation.Locale))
 		} else {
 			metadataFile.MustPrintf("\nCREATE COLLATION %s (LC_COLLATE = '%s', LC_CTYPE = '%s'", collation.FQN(), collation.Collate, collation.Ctype)
 		}
@@ -238,7 +238,9 @@ func PrintCreateCollationStatements(metadataFile *utils.FileWithByteCount, objTo
 			metadataFile.MustPrintf(", PROVIDER = '%s'", providerOption)
 		}
 		if collation.IcuRules != "" {
-			metadataFile.MustPrintf(", RULES = '%s'", collation.IcuRules)
+			// ICU tailoring uses the apostrophe as its own quoting character,
+			// so these genuinely do contain single quotes.
+			metadataFile.MustPrintf(", RULES = '%s'", utils.EscapeSingleQuotes(collation.IcuRules))
 		}
 		if collation.IsDeterministic == "f" {
 			metadataFile.MustPrintf(", DETERMINISTIC = 'false'")

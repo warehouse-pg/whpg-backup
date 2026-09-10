@@ -39,22 +39,28 @@ func PrintCreateDatabaseStatement(metadataFile *utils.FileWithByteCount, tocfile
 	// locale it reads, which for icu and builtin is datlocale rather than
 	// datcollate/datctype.  Emitted whenever either differs from the default
 	// database, since a matching provider can still carry a different locale.
-	if db.LocProvider != "" && (db.LocProvider != defaultDB.LocProvider || db.Locale != defaultDB.Locale) {
+	if db.LocProvider != "" && (db.LocProvider != defaultDB.LocProvider ||
+		db.Locale != defaultDB.Locale || db.IcuRules != defaultDB.IcuRules) {
 		switch db.LocProvider {
 		case "c":
+			// libc keeps its locale in datcollate/datctype, which the
+			// LC_COLLATE/LC_CTYPE clauses below carry; datlocale is asserted
+			// NULL for this provider, so there is nothing else to reproduce.
 			metadataFile.MustPrintf(" LOCALE_PROVIDER libc")
 		case "i":
 			metadataFile.MustPrintf(" LOCALE_PROVIDER icu")
 			if db.Locale != "" {
-				metadataFile.MustPrintf(" ICU_LOCALE '%s'", db.Locale)
+				metadataFile.MustPrintf(" ICU_LOCALE '%s'", utils.EscapeSingleQuotes(db.Locale))
 			}
 			if db.IcuRules != "" {
-				metadataFile.MustPrintf(" ICU_RULES '%s'", db.IcuRules)
+				// ICU tailoring uses the apostrophe as its own quoting
+				// character, so these genuinely do contain single quotes.
+				metadataFile.MustPrintf(" ICU_RULES '%s'", utils.EscapeSingleQuotes(db.IcuRules))
 			}
 		case "b":
 			metadataFile.MustPrintf(" LOCALE_PROVIDER builtin")
 			if db.Locale != "" {
-				metadataFile.MustPrintf(" BUILTIN_LOCALE '%s'", db.Locale)
+				metadataFile.MustPrintf(" BUILTIN_LOCALE '%s'", utils.EscapeSingleQuotes(db.Locale))
 			}
 		default:
 			gplog.Warn("Database %s has unrecognized locale provider '%s'; it will be restored with the default provider.", db.Name, db.LocProvider)
