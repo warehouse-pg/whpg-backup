@@ -34,6 +34,16 @@ var _ = Describe("backup/data tests", func() {
 			atts := backup.ConstructTableAttributesList(columnDefs)
 			Expect(atts).To(Equal(""))
 		})
+		It("excludes generated columns, stored and virtual alike", func() {
+			// A virtual generated column (WHPG19+) has no stored value to copy.
+			columnDefs := []backup.ColumnDefinition{
+				{Name: "a"},
+				{Name: "b", AttGenerated: "STORED"},
+				{Name: "c", AttGenerated: "VIRTUAL"},
+			}
+			atts := backup.ConstructTableAttributesList(columnDefs)
+			Expect(atts).To(Equal("(a)"))
+		})
 	})
 	Describe("AddTableDataEntriesToTOC", func() {
 		var (
