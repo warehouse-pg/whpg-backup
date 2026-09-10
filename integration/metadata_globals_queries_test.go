@@ -344,7 +344,15 @@ CREATEEXTTABLE (protocol='gphdfs', type='writable')`
 
 			for _, role := range results {
 				if role.Name == "role1" {
-					structmatcher.ExpectStructsToMatchExcluding(&expectedRole, role, "TimeConstraints.Oid")
+					if connectionPool.Version.AtLeast("19") {
+						// WHPG19 defaults password_encryption to scram-sha-256,
+						// which salts the hash, so it can't be compared for
+						// exact equality across runs.
+						Expect(role.Password).To(HavePrefix("SCRAM-SHA-256$"))
+						structmatcher.ExpectStructsToMatchExcluding(&expectedRole, role, "TimeConstraints.Oid", "Password")
+					} else {
+						structmatcher.ExpectStructsToMatchExcluding(&expectedRole, role, "TimeConstraints.Oid")
+					}
 					return
 				}
 			}
@@ -499,19 +507,32 @@ CREATEEXTTABLE (protocol='gphdfs', type='writable')`
 		BeforeEach(func() {
 			testhelper.AssertQueryRuns(connectionPool, `CREATE ROLE usergroup`)
 			testhelper.AssertQueryRuns(connectionPool, `CREATE ROLE testuser`)
+			if connectionPool.Version.AtLeast("19") {
+				// PG16+: a grantor recorded in pg_auth_members must actually
+				// hold ADMIN OPTION on the role; superuser grants without it
+				// are recorded as the bootstrap superuser instead of the
+				// current role, so give testrole ADMIN OPTION up front.
+				testhelper.AssertQueryRuns(connectionPool, `GRANT usergroup TO testrole WITH ADMIN OPTION`)
+			}
 		})
 		AfterEach(func() {
 			defer testhelper.AssertQueryRuns(connectionPool, `DROP ROLE usergroup`)
 			defer testhelper.AssertQueryRuns(connectionPool, `DROP ROLE testuser`)
 		})
 		It("returns a role without ADMIN OPTION", func() {
-			testhelper.AssertQueryRuns(connectionPool, "GRANT usergroup TO testuser")
+			if connectionPool.Version.AtLeast("19") {
+				// PG16+ records the bootstrap superuser as grantor for grants
+				// made by a superuser, unless the grantor is named explicitly.
+				testhelper.AssertQueryRuns(connectionPool, "GRANT usergroup TO testuser GRANTED BY testrole")
+			} else {
+				testhelper.AssertQueryRuns(connectionPool, "GRANT usergroup TO testuser")
+			}
 			expectedRoleMember := backup.RoleMember{Role: "usergroup", Member: "testuser", Grantor: "testrole", IsAdmin: false}
 
 			roleMembers := backup.GetRoleMembers(connectionPool)
 
 			for _, roleMember := range roleMembers {
-				if roleMember.Role == "usergroup" {
+				if roleMember.Role == "usergroup" && roleMember.Member == "testuser" {
 					structmatcher.ExpectStructsToMatch(&expectedRoleMember, &roleMember)
 					return
 				}
@@ -525,7 +546,7 @@ CREATEEXTTABLE (protocol='gphdfs', type='writable')`
 			roleMembers := backup.GetRoleMembers(connectionPool)
 
 			for _, roleMember := range roleMembers {
-				if roleMember.Role == "usergroup" {
+				if roleMember.Role == "usergroup" && roleMember.Member == "testuser" {
 					structmatcher.ExpectStructsToMatch(&expectedRoleMember, &roleMember)
 					return
 				}
@@ -541,13 +562,21 @@ CREATEEXTTABLE (protocol='gphdfs', type='writable')`
 			defer testhelper.AssertQueryRuns(connectionPool, `DROP ROLE "1usergroup"`)
 			testhelper.AssertQueryRuns(connectionPool, `CREATE ROLE "1testuser"`)
 			defer testhelper.AssertQueryRuns(connectionPool, `DROP ROLE "1testuser"`)
-			testhelper.AssertQueryRuns(connectionPool, `GRANT "1usergroup" TO "1testuser"`)
+			if connectionPool.Version.AtLeast("19") {
+				// See BeforeEach: the grantor must hold ADMIN OPTION on PG16+,
+				// and must be named explicitly to be recorded (superuser grants
+				// otherwise record the bootstrap superuser).
+				testhelper.AssertQueryRuns(connectionPool, `GRANT "1usergroup" TO "1testrole" WITH ADMIN OPTION`)
+				testhelper.AssertQueryRuns(connectionPool, `GRANT "1usergroup" TO "1testuser" GRANTED BY "1testrole"`)
+			} else {
+				testhelper.AssertQueryRuns(connectionPool, `GRANT "1usergroup" TO "1testuser"`)
+			}
 			expectedRoleMember := backup.RoleMember{Role: `"1usergroup"`, Member: `"1testuser"`, Grantor: `"1testrole"`, IsAdmin: false}
 
 			roleMembers := backup.GetRoleMembers(connectionPool)
 
 			for _, roleMember := range roleMembers {
-				if roleMember.Role == `"1usergroup"` {
+				if roleMember.Role == `"1usergroup"` && roleMember.Member == `"1testuser"` {
 					structmatcher.ExpectStructsToMatch(&expectedRoleMember, &roleMember)
 					return
 				}
@@ -555,6 +584,13 @@ CREATEEXTTABLE (protocol='gphdfs', type='writable')`
 			Fail(`Role "1testuser" is not a member of role "1usergroup"`)
 		})
 		It("handles dropped granter", func() {
+			if connectionPool.Version.AtLeast("19") {
+				// PG16+ records a dependency on the grantor of a role grant,
+				// so a role that granted a still-active membership can no
+				// longer be dropped — the stale-grantor state this exercises
+				// cannot exist.
+				Skip("PG16+ forbids dropping a role recorded as grantor of an active role grant")
+			}
 			testhelper.AssertQueryRuns(connectionPool, `CREATE ROLE testdropgranter_role`)
 			defer testhelper.AssertQueryRuns(connectionPool, `DROP ROLE testdropgranter_role`)
 			testhelper.AssertQueryRuns(connectionPool, `CREATE ROLE testdropgranter_member`)
@@ -572,13 +608,18 @@ CREATEEXTTABLE (protocol='gphdfs', type='writable')`
 			testhelper.AssertQueryRuns(connectionPool, "CREATE OR REPLACE FUNCTION pg_catalog.text(oid) RETURNS text STRICT IMMUTABLE LANGUAGE SQL AS 'SELECT textin(oidout($1));';")
 			testhelper.AssertQueryRuns(connectionPool, "CREATE CAST (oid AS text) WITH FUNCTION pg_catalog.text(oid) AS IMPLICIT;")
 			defer testhelper.AssertQueryRuns(connectionPool, "DROP FUNCTION pg_catalog.text(oid) CASCADE;")
-			testhelper.AssertQueryRuns(connectionPool, "GRANT usergroup TO testuser")
+			if connectionPool.Version.AtLeast("19") {
+				// See above: name the grantor explicitly so it is recorded.
+				testhelper.AssertQueryRuns(connectionPool, "GRANT usergroup TO testuser GRANTED BY testrole")
+			} else {
+				testhelper.AssertQueryRuns(connectionPool, "GRANT usergroup TO testuser")
+			}
 			expectedRoleMember := backup.RoleMember{Role: "usergroup", Member: "testuser", Grantor: "testrole", IsAdmin: false}
 
 			roleMembers := backup.GetRoleMembers(connectionPool)
 
 			for _, roleMember := range roleMembers {
-				if roleMember.Role == "usergroup" {
+				if roleMember.Role == "usergroup" && roleMember.Member == "testuser" {
 					structmatcher.ExpectStructsToMatch(&expectedRoleMember, &roleMember)
 					return
 				}

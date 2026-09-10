@@ -173,6 +173,10 @@ func GetConstraints(connectionPool *dbconn.DBConn, includeTables ...Relation) []
 			AND coninhcount = 0
 		GROUP BY con.oid, conname, contype, c.relname, n.nspname, %s pt.parrelid`, conIsLocal, "%s", ExtensionFilterClause("c"), conIsLocal)
 	} else {
+		// PG18+ (WHPG19) represents column NOT NULL as pg_constraint rows
+		// (contype 'n'). Those are already captured in the column definitions
+		// (attnotnull), so exclude them here like pg_dump does; 'n' does not
+		// exist as a contype before PG17 so the filter is harmless on GPDB7.
 		tableQuery = fmt.Sprintf(`
 		SELECT con.oid,
 			quote_ident(n.nspname) AS schema,
@@ -193,7 +197,7 @@ func GetConstraints(connectionPool *dbconn.DBConn, includeTables ...Relation) []
 		WHERE %s
 			AND %s
 			AND c.relname IS NOT NULL
-			AND contype != 't'
+			AND contype NOT IN ('t', 'n')
 			AND (c.relispartition IS FALSE OR conislocal IS TRUE)
 			AND coninhcount = 0
 		GROUP BY con.oid, conname, contype, c.relname, n.nspname, con.conislocal, pt.partrelid`, "%s", ExtensionFilterClause("c"))
@@ -215,6 +219,7 @@ func GetConstraints(connectionPool *dbconn.DBConn, includeTables ...Relation) []
 	WHERE %s
 		AND %s
 		AND t.typname IS NOT NULL
+		AND contype != 'n'
 	GROUP BY con.oid, conname, contype, n.nspname, %s t.typname
 	ORDER BY name`, conIsLocal, SchemaFilterClause("n"), ExtensionFilterClause("con"), conIsLocal)
 
