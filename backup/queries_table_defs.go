@@ -238,6 +238,12 @@ var storageTypeCodes = map[string]string{
 
 var attGeneratedCodes = map[string]string{
 	"s": "STORED",
+	// PG18+ (WHPG19) adds virtual generated columns.  Mapping the code matters
+	// twice over: the keyword is needed to reproduce the column, and an
+	// unmapped code reads as "not generated", which would both emit a plain
+	// DEFAULT and put the column into the COPY list -- see
+	// ConstructTableAttributesList -- even though it has no stored value.
+	"v": "VIRTUAL",
 }
 
 func GetColumnDefinitions(connectionPool *dbconn.DBConn) map[uint32][]ColumnDefinition {
