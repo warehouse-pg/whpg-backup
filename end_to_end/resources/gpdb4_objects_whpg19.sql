@@ -1,3 +1,13 @@
+-- WHPG19 variant of gpdb4_objects.sql.
+--
+-- This is a fork of that file with exactly three substitutions, each marked
+-- with a comment below: the postfix operator, the operator-class RECHECK
+-- keyword, and the MULE_INTERNAL conversion -- none of which PG19 accepts.
+--
+-- Because it is a fork, an object added to gpdb4_objects.sql is NOT exercised
+-- on WHPG19 until it is added here too, and nothing fails to say so. Mirror
+-- every change to that file into this one until the two are restructured into
+-- a shared base plus per-version deltas.
 
 SET statement_timeout = 0;
 SET client_encoding = 'UTF8';

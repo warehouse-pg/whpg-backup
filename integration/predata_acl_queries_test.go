@@ -129,11 +129,7 @@ var _ = Describe("backup integration tests", func() {
 				structmatcher.ExpectStructsToMatchExcluding(&expectedMetadata, &resultMetadata, "Oid")
 			})
 			It("returns a slice of default metadata for a procedural language", func() {
-				if connectionPool.Version.AtLeast("19") {
-					// WHPG19 ships plpython3u as a preinstalled extension; standalone
-					// CREATE/DROP LANGUAGE of it is no longer possible.
-					Skip("procedural languages are extension-managed on WHPG19")
-				}
+				testutils.SkipIfLanguagesAreExtensionManaged(connectionPool)
 				plpythonString := "plpythonu"
 				if connectionPool.Version.AtLeast("7") {
 					plpythonString = "plpython3u"
@@ -342,10 +338,7 @@ LANGUAGE SQL`)
 				structmatcher.ExpectStructsToMatchExcluding(&expectedMetadata, &resultMetadata, "Oid")
 			})
 			It("returns a slice of default metadata for an external protocol", func() {
-				if connectionPool.Version.AtLeast("19") {
-					// gps3ext.so (the s3 external protocol library) is not shipped with WHPG19.
-					Skip("s3 protocol fixture library gps3ext.so is not available on WHPG19")
-				}
+				testutils.SkipIfNoS3Protocol(connectionPool)
 				testhelper.AssertQueryRuns(connectionPool, `CREATE OR REPLACE FUNCTION public.read_from_s3() RETURNS integer AS '$libdir/gps3ext.so', 's3_import' LANGUAGE C STABLE;`)
 				defer testhelper.AssertQueryRuns(connectionPool, "DROP FUNCTION public.read_from_s3()")
 				testhelper.AssertQueryRuns(connectionPool, `CREATE TRUSTED PROTOCOL s3_read (readfunc = public.read_from_s3);`)

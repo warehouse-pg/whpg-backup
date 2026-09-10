@@ -34,6 +34,25 @@ var _ = Describe("backup/data tests", func() {
 			atts := backup.ConstructTableAttributesList(columnDefs)
 			Expect(atts).To(Equal(""))
 		})
+		It("skips data for a table whose every column is generated", func() {
+			// Such a table cannot be expressed as a COPY column list -- an
+			// empty list is a syntax error, and no list at all covers the
+			// generated column and fails the restore -- so it carries no data.
+			allGenerated := backup.Table{
+				Relation: backup.Relation{Oid: 1, Schema: "public", Name: "vgen_only"},
+				TableDefinition: backup.TableDefinition{ColumnDefs: []backup.ColumnDefinition{
+					{Name: "j", AttGenerated: "VIRTUAL"},
+				}},
+			}
+			Expect(allGenerated.SkipDataBackup()).To(BeTrue())
+		})
+		It("does not skip data for a table with no columns at all", func() {
+			noColumns := backup.Table{
+				Relation:        backup.Relation{Oid: 1, Schema: "public", Name: "nocols"},
+				TableDefinition: backup.TableDefinition{ColumnDefs: []backup.ColumnDefinition{}},
+			}
+			Expect(noColumns.SkipDataBackup()).To(BeFalse())
+		})
 		It("excludes generated columns, stored and virtual alike", func() {
 			// A virtual generated column (WHPG19+) has no stored value to copy.
 			columnDefs := []backup.ColumnDefinition{

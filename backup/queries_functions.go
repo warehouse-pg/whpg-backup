@@ -589,6 +589,20 @@ func GetCasts(connectionPool *dbconn.DBConn) []Cast {
 	} else {
 		methodStr = "CASE WHEN c.castfunc = 0 THEN 'b' ELSE 'f' END AS castmethod,"
 	}
+	// "CREATE TYPE ... AS RANGE" on PG14+ (WHPG19) also creates the
+	// range->multirange cast. It is not independently creatable via CREATE
+	// CAST, and restoring it explicitly errors, because at that point in
+	// predata restore its endpoint type is still just a shell. Exclude it
+	// exactly as pg_dump's getCasts() does, and only where it can exist --
+	// pg_range.rngmultitypid is itself PG14+.
+	multirangeCastClause := ""
+	if connectionPool.Version.AtLeast("19") {
+		multirangeCastClause = `AND NOT EXISTS (
+			SELECT 1 FROM pg_catalog.pg_range r
+			WHERE c.castsource = r.rngtypid AND c.casttarget = r.rngmultitypid
+		)`
+	}
+
 	query := fmt.Sprintf(`
 	SELECT
 		c.oid,
@@ -609,19 +623,10 @@ func GetCasts(connectionPool *dbconn.DBConn) []Cast {
 		LEFT JOIN pg_namespace n ON p.pronamespace = n.oid
 	WHERE ((%s) OR (%s) OR (%s))
 		AND %s
-		-- Exclude casts Postgres creates automatically as an internal side
-		-- effect of another object (e.g. the range->multirange cast implicit
-		-- in "CREATE TYPE ... AS RANGE" on PG14+/WHPG19): they aren't
-		-- independently creatable via CREATE CAST, and PG_restore-ing one
-		-- explicitly errors since its endpoint type is still just a shell at
-		-- that point in predata restore. Same anti-join pg_dump itself uses.
-		AND NOT EXISTS (
-			SELECT 1 FROM pg_depend
-			WHERE classid = 'pg_cast'::regclass AND objid = c.oid AND deptype = 'i'
-		)
+		%s
 	ORDER BY 1, 2`, methodStr,
 		SchemaFilterClause("sn"), SchemaFilterClause("tn"),
-		SchemaFilterClause("n"), ExtensionFilterClause("c"))
+		SchemaFilterClause("n"), ExtensionFilterClause("c"), multirangeCastClause)
 
 	casts := make([]Cast, 0)
 	err := connectionPool.Select(&casts, query)
@@ -862,7 +867,8 @@ func GetForeignDataWrappers(connectionPool *dbconn.DBConn) []ForeignDataWrapper 
 			SELECT pg_catalog.quote_ident(option_name) || ' ' || pg_catalog.quote_literal(option_value)
 			FROM pg_options_to_table(fdwoptions) ORDER BY option_name), ', ') AS options
 	FROM pg_foreign_data_wrapper
-	WHERE oid >= %d AND %s`, FIRST_NORMAL_OBJECT_ID, ExtensionFilterClause(""))
+	WHERE oid >= %d AND %s
+	ORDER BY fdwname`, FIRST_NORMAL_OBJECT_ID, ExtensionFilterClause(""))
 
 	err := connectionPool.Select(&results, query)
 	gplog.FatalOnError(err)

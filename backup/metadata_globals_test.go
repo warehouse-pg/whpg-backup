@@ -84,6 +84,22 @@ GRANT TEMPORARY,CONNECT ON DATABASE testdb TO testrole;`,
 			backup.PrintCreateDatabaseStatement(backupfile, tocfile, defaultDB, db, emptyMetadataMap)
 			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `CREATE DATABASE testdb TEMPLATE template0;`)
 		})
+		It("prints the ICU rules when only they differ from the default database", func() {
+			defaultDB := backup.Database{LocProvider: "i", Locale: "en-US"}
+			db := backup.Database{Oid: 1, Name: "testdb", Tablespace: "pg_default",
+				LocProvider: "i", Locale: "en-US", IcuRules: "&a < g"}
+			emptyMetadataMap := backup.MetadataMap{}
+			backup.PrintCreateDatabaseStatement(backupfile, tocfile, defaultDB, db, emptyMetadataMap)
+			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `CREATE DATABASE testdb TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'en-US' ICU_RULES '&a < g';`)
+		})
+		It("escapes single quotes in the ICU rules", func() {
+			// ICU tailoring uses the apostrophe as its own quoting character.
+			db := backup.Database{Oid: 1, Name: "testdb", Tablespace: "pg_default",
+				LocProvider: "i", Locale: "en-US", IcuRules: "&a < 'x'"}
+			emptyMetadataMap := backup.MetadataMap{}
+			backup.PrintCreateDatabaseStatement(backupfile, tocfile, emptyDB, db, emptyMetadataMap)
+			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `CREATE DATABASE testdb TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'en-US' ICU_RULES '&a < ''x''';`)
+		})
 		It("does not print encoding information if it is the same as defaults", func() {
 			defaultDB := backup.Database{Oid: 0, Name: "", Tablespace: "", Encoding: "UTF8", Collate: "en_US.utf-8", CType: "en_US.utf-8"}
 			db := backup.Database{Oid: 1, Name: "testdb", Tablespace: "test_tablespace", Encoding: "UTF8", Collate: "en_US.utf-8", CType: "en_US.utf-8"}

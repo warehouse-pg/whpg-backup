@@ -7,6 +7,7 @@ package backup
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
@@ -229,27 +230,9 @@ func GetOperatorClassOperators(connectionPool *dbconn.DBConn) map[uint32][]Opera
 		AND classid = 'pg_catalog.pg_amop'::pg_catalog.regclass
 	ORDER BY amopstrategy`
 
-	// PG13+ records operator class members as depending on the operator
-	// FAMILY, not the class, so the pg_depend join above finds nothing on
-	// WHPG19. Attribute members to a class the way pg_dump does: amop rows in
-	// the class's family whose argument types match the class's input type.
-	atLeast19Query := `
-	SELECT cls.oid AS classoid,
-		amopstrategy AS strategynumber,
-		amopopr::pg_catalog.regoperator AS operator,
-		coalesce(quote_ident(ns.nspname) || '.' || quote_ident(opf.opfname), '') AS orderbyfamily
-	FROM pg_catalog.pg_opclass cls
-		JOIN pg_catalog.pg_amop ao ON ao.amopfamily = cls.opcfamily
-			AND ao.amoplefttype = cls.opcintype AND ao.amoprighttype = cls.opcintype
-		LEFT JOIN pg_opfamily opf ON opf.oid = ao.amopsortfamily
-		LEFT JOIN pg_namespace ns ON ns.oid = opf.opfnamespace
-	ORDER BY amopstrategy`
-
 	query := ""
 	if connectionPool.Version.Is("5") {
 		query = version5Query
-	} else if connectionPool.Version.AtLeast("19") {
-		query = atLeast19Query
 	} else {
 		query = atLeast6Query
 	}
@@ -257,11 +240,78 @@ func GetOperatorClassOperators(connectionPool *dbconn.DBConn) map[uint32][]Opera
 	err := connectionPool.Select(&results, query)
 	gplog.FatalOnError(err)
 
+	// PG13+ (WHPG19) records a GiST/GIN/SP-GiST opclass's OPERATOR members as
+	// depending on the operator FAMILY even when they were declared inline in
+	// CREATE OPERATOR CLASS -- see the comment above the operator loop in
+	// gistvalidate(). The pg_depend query above therefore returns nothing for
+	// them, and since gpbackup only ever emits a bare CREATE OPERATOR FAMILY
+	// and never dumps family members, those operators would be lost outright.
+	// Recover them from the family, and merge rather than replace: btree and
+	// hash still depend on the opclass (nbtvalidate/hashvalidate), and that
+	// attribution is exact where it exists.
+	if connectionPool.Version.AtLeast("19") {
+		familyResults := make([]OperatorClassOperator, 0)
+		err = connectionPool.Select(&familyResults, familyMemberQuery(`
+		amopstrategy AS strategynumber,
+		amopopr::pg_catalog.regoperator AS operator,
+		coalesce(quote_ident(sort_ns.nspname) || '.' || quote_ident(sort_opf.opfname), '') AS orderbyfamily`,
+			`JOIN pg_catalog.pg_amop ao ON ao.amopfamily = cls.opcfamily
+			AND ao.amoplefttype = cls.opcintype AND ao.amoprighttype = cls.opcintype
+		LEFT JOIN pg_catalog.pg_opfamily sort_opf ON sort_opf.oid = ao.amopsortfamily
+		LEFT JOIN pg_catalog.pg_namespace sort_ns ON sort_ns.oid = sort_opf.opfnamespace`))
+		gplog.FatalOnError(err)
+		results = append(results, familyResults...)
+	}
+
 	operators := make(map[uint32][]OperatorClassOperator)
+	seen := make(map[OperatorClassOperator]bool)
 	for _, result := range results {
+		// A class whose members pg_depend already attributed exactly will match
+		// the family lookup as well; keep the first sighting of each member.
+		if seen[result] {
+			continue
+		}
+		seen[result] = true
 		operators[result.ClassOid] = append(operators[result.ClassOid], result)
 	}
+	for classOid := range operators {
+		sort.SliceStable(operators[classOid], func(i, j int) bool {
+			return operators[classOid][i].StrategyNumber < operators[classOid][j].StrategyNumber
+		})
+	}
 	return operators
+}
+
+// familyMemberQuery builds the WHPG19 fallback that attributes an operator
+// family's members to the one opclass that family belongs to.
+//
+// It deliberately covers only families holding a single opclass -- the shape
+// CREATE OPERATOR CLASS produces when no FAMILY is named. In a family shared by
+// several classes there is nothing in the catalog that says which class a
+// family-level member was declared with, and guessing would fold members that
+// belong to a sibling class (or that were added by ALTER OPERATOR FAMILY) into
+// this one: on restore those come back as class members, and if the family
+// already held a matching member the restore fails outright with "operator
+// already exists in operator family". Losing them, as gpbackup already does
+// today for family members generally, is the safer direction.
+//
+// The schema and extension filters matter for more than tidiness: built-in
+// catalog members are pinned and have no pg_depend rows, so the query they
+// supplement never returned them. Without the filters every backup would fetch
+// the entire catalog's members only for GetOperatorClasses to discard them.
+func familyMemberQuery(selectList string, joins string) string {
+	return fmt.Sprintf(`
+	SELECT cls.oid AS classoid,
+		%s
+	FROM pg_catalog.pg_opclass cls
+		JOIN pg_catalog.pg_namespace cls_ns ON cls_ns.oid = cls.opcnamespace
+		%s
+	WHERE %s
+		AND %s
+		AND NOT EXISTS (
+			SELECT 1 FROM pg_catalog.pg_opclass other
+			WHERE other.opcfamily = cls.opcfamily AND other.oid <> cls.oid)`,
+		selectList, joins, SchemaFilterClause("cls_ns"), ExtensionFilterClause("cls"))
 }
 
 type OperatorClassFunction struct {
@@ -286,28 +336,40 @@ func GetOperatorClassFunctions(connectionPool *dbconn.DBConn) map[uint32][]Opera
 		AND classid = 'pg_catalog.pg_amproc'::pg_catalog.regclass
 	ORDER BY amprocnum`
 
-	// See GetOperatorClassOperators: PG13+ ties members to the operator
-	// family, so attribute support functions to classes via family + input
-	// type, like pg_dump.
-	if connectionPool.Version.AtLeast("19") {
-		query = `
-	SELECT cls.oid AS classoid,
-		amprocnum AS supportnumber,
-		amproclefttype::regtype,
-		amprocrighttype::regtype,
-		amproc::regprocedure::text AS functionname
-	FROM pg_catalog.pg_opclass cls
-		JOIN pg_catalog.pg_amproc ap ON ap.amprocfamily = cls.opcfamily
-			AND ap.amproclefttype = cls.opcintype AND ap.amprocrighttype = cls.opcintype
-	ORDER BY amprocnum`
-	}
-
 	err := connectionPool.Select(&results, query)
 	gplog.FatalOnError(err)
 
+	// Unlike the OPERATOR members, a GiST opclass's *required* support
+	// functions keep a hard dependency on the opclass, so the query above
+	// still finds those on WHPG19; only the optional ones (compress, distance,
+	// options, ...) are forced onto the family. Merge those in the same way,
+	// rather than replacing a query that is exact for everything else.
+	if connectionPool.Version.AtLeast("19") {
+		familyResults := make([]OperatorClassFunction, 0)
+		err = connectionPool.Select(&familyResults, familyMemberQuery(`
+		amprocnum AS supportnumber,
+		amproclefttype::regtype,
+		amprocrighttype::regtype,
+		amproc::regprocedure::text AS functionname`,
+			`JOIN pg_catalog.pg_amproc ap ON ap.amprocfamily = cls.opcfamily
+			AND ap.amproclefttype = cls.opcintype AND ap.amprocrighttype = cls.opcintype`))
+		gplog.FatalOnError(err)
+		results = append(results, familyResults...)
+	}
+
 	functions := make(map[uint32][]OperatorClassFunction)
+	seen := make(map[OperatorClassFunction]bool)
 	for _, result := range results {
+		if seen[result] {
+			continue
+		}
+		seen[result] = true
 		functions[result.ClassOid] = append(functions[result.ClassOid], result)
+	}
+	for classOid := range functions {
+		sort.SliceStable(functions[classOid], func(i, j int) bool {
+			return functions[classOid][i].SupportNumber < functions[classOid][j].SupportNumber
+		})
 	}
 	return functions
 }

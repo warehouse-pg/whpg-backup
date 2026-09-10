@@ -24,7 +24,26 @@ type Table struct {
 
 func (t Table) SkipDataBackup() bool {
 	def := t.TableDefinition
-	return def.IsExternal || (def.ForeignDef != ForeignTableDefinition{})
+	return def.IsExternal || (def.ForeignDef != ForeignTableDefinition{}) || t.hasOnlyGeneratedColumns()
+}
+
+// A table whose every column is generated holds no data to copy, and that
+// cannot be expressed as a COPY column list: an empty list is a syntax error,
+// and omitting the list makes COPY cover the generated column, which fails the
+// restore with "cannot be inserted into". PG18's virtual generated columns make
+// such a table easy to construct, so skip its data rather than write out a COPY
+// that cannot work. A table with no columns at all is left alone -- COPY
+// without a list is correct there.
+func (t Table) hasOnlyGeneratedColumns() bool {
+	if len(t.ColumnDefs) == 0 {
+		return false
+	}
+	for _, column := range t.ColumnDefs {
+		if column.AttGenerated == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func (t Table) GetMetadataEntry() (string, toc.MetadataEntry) {

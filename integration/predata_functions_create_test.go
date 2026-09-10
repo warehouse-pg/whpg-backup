@@ -528,11 +528,7 @@ var _ = Describe("backup integration create statement tests", func() {
 	})
 	Describe("PrintCreateLanguageStatements", func() {
 		It("creates procedural languages", func() {
-			if connectionPool.Version.AtLeast("19") {
-				// WHPG19 ships plpython3u as a preinstalled extension; standalone
-				// CREATE/DROP LANGUAGE of it is no longer possible.
-				Skip("procedural languages are extension-managed on WHPG19")
-			}
+			testutils.SkipIfLanguagesAreExtensionManaged(connectionPool)
 			plpythonString := "plpython"
 			if connectionPool.Version.AtLeast("7") {
 				plpythonString = "plpython3"

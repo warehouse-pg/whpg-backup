@@ -296,6 +296,13 @@ ALTER TYPE public.base_type
 			backup.PrintCreateCollationStatements(backupfile, tocfile, []backup.Collation{collation}, emptyMetadataMap)
 			testutils.AssertBufferContents(tocfile.PredataEntries, buffer, `CREATE COLLATION schema1.collation1 (LOCALE = 'en-US', PROVIDER = 'icu', RULES = '&a < g');`)
 		})
+		It("escapes single quotes in the ICU rules", func() {
+			// ICU tailoring uses the apostrophe as its own quoting character.
+			collation := backup.Collation{Oid: 1, Name: "collation1", Schema: "schema1",
+				Provider: "i", Locale: "en-US", IcuRules: "&a < 'x'"}
+			backup.PrintCreateCollationStatements(backupfile, tocfile, []backup.Collation{collation}, emptyMetadataMap)
+			testutils.AssertBufferContents(tocfile.PredataEntries, buffer, `CREATE COLLATION schema1.collation1 (LOCALE = 'en-US', PROVIDER = 'icu', RULES = '&a < ''x''');`)
+		})
 		It("prints a builtin collation statement with a locale", func() {
 			collation := backup.Collation{Oid: 1, Name: "collation1", Schema: "schema1",
 				Provider: "b", Locale: "C.UTF-8"}
