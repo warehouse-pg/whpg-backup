@@ -42,6 +42,7 @@ type Function struct {
 	ExecLocation      string `db:"proexeclocation"`
 	Parallel          string `db:"proparallel"` // GPDB 7+
 	TransformTypes    string // GPDB 7+
+	SqlBody           string // WHPG19+
 }
 
 func (f Function) GetMetadataEntry() (string, toc.MetadataEntry) {
@@ -77,6 +78,17 @@ func GetFunctions(connectionPool *dbconn.DBConn) []Function {
 		SELECT 1 FROM pg_depend
 		WHERE classid = 'pg_proc'::regclass::oid
 			AND objid = p.oid AND deptype = 'i')`
+	}
+
+	// PG14+ (WHPG19) lets a SQL function carry a pre-parsed, SQL-standard body
+	// (BEGIN ATOMIC ... END, or RETURN expr) in pg_proc.prosqlbody. For those
+	// functions the server stores prosrc as the empty string -- see the
+	// sql_body branch of interpret_AS_clause() -- so backing up prosrc alone
+	// yields a function with no body at all. Deparse the real body the way
+	// pg_dump does, and prefer it over prosrc wherever it is present.
+	sqlBodyAtt := ""
+	if connectionPool.Version.AtLeast("19") {
+		sqlBodyAtt = "coalesce(pg_catalog.pg_get_function_sqlbody(p.oid), '') AS sqlbody,"
 	}
 
 	locationAtts := ""
@@ -124,6 +136,7 @@ func GetFunctions(connectionPool *dbconn.DBConn) []Function {
 			quote_ident(nspname) AS schema,
 			quote_ident(p.proname) AS name,
 			proretset,
+			%s
 			coalesce(prosrc, '') AS functionbody,
 			coalesce(probin, '') AS binarypath,
 			pg_catalog.pg_get_function_arguments(p.oid) AS arguments,
@@ -154,7 +167,7 @@ func GetFunctions(connectionPool *dbconn.DBConn) []Function {
 		WHERE %s
 			AND prokind <> 'a'
 			AND %s%s
-		ORDER BY nspname, proname, identargs`, locationAtts,
+		ORDER BY nspname, proname, identargs`, sqlBodyAtt, locationAtts,
 		SchemaFilterClause("n"),
 		ExtensionFilterClause("p"),
 		excludeImplicitFunctionsClause)

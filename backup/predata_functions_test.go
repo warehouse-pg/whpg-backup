@@ -46,6 +46,19 @@ var _ = Describe("backup/predata_functions tests", func() {
 $$add_two_ints$$
 LANGUAGE internal%s;`, DEFAULT_PARALLEL))
 			})
+			It("prints a SQL-standard function body after the modifiers, with no AS clause", func() {
+				// WHPG19+: the body comes from prosqlbody, and prosrc is empty.
+				funcDef.Language = "sql"
+				funcDef.FunctionBody = ""
+				funcDef.Cost = float32(100)
+				funcDef.SqlBody = "BEGIN ATOMIC\n SELECT $1 + $2;\nEND"
+				backup.PrintCreateFunctionStatement(backupfile, tocfile, funcDef, funcMetadata)
+				testutils.AssertBufferContents(tocfile.PredataEntries, buffer, fmt.Sprintf(`CREATE FUNCTION public.func_name(integer, integer) RETURNS integer
+LANGUAGE sql%s
+BEGIN ATOMIC
+ SELECT $1 + $2;
+END;`, DEFAULT_PARALLEL))
+			})
 			It("prints a function definition for a function that returns a set", func() {
 				funcDef.ReturnsSet = true
 				funcDef.ResultType = sql.NullString{String: "SETOF integer", Valid: true}

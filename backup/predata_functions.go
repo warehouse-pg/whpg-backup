@@ -18,14 +18,30 @@ func PrintCreateFunctionStatement(metadataFile *utils.FileWithByteCount, objToc 
 	start := metadataFile.ByteCount
 	funcFQN := utils.MakeFQN(funcDef.Schema, funcDef.Name)
 
-	if connectionPool.Version.AtLeast("7") && funcDef.Kind == "p" {
-		metadataFile.MustPrintf("\n\nCREATE PROCEDURE %s(%s) AS", funcFQN, funcDef.Arguments.String)
-	} else {
-		metadataFile.MustPrintf("\n\nCREATE FUNCTION %s(%s) RETURNS %s AS", funcFQN, funcDef.Arguments.String, funcDef.ResultType.String)
+	// A SQL-standard body (WHPG19+) is not introduced by AS, and has to follow
+	// the modifiers rather than precede LANGUAGE, so the statement is laid out
+	// differently in that case.  This mirrors dumpFunc() in pg_dump.c.
+	hasSqlBody := funcDef.SqlBody != ""
+	asClause := " AS"
+	if hasSqlBody {
+		asClause = ""
 	}
-	PrintFunctionBodyOrPath(metadataFile, funcDef)
+
+	if connectionPool.Version.AtLeast("7") && funcDef.Kind == "p" {
+		metadataFile.MustPrintf("\n\nCREATE PROCEDURE %s(%s)%s", funcFQN, funcDef.Arguments.String, asClause)
+	} else {
+		metadataFile.MustPrintf("\n\nCREATE FUNCTION %s(%s) RETURNS %s%s", funcFQN, funcDef.Arguments.String, funcDef.ResultType.String, asClause)
+	}
+	if hasSqlBody {
+		metadataFile.MustPrintln()
+	} else {
+		PrintFunctionBodyOrPath(metadataFile, funcDef)
+	}
 	metadataFile.MustPrintf("LANGUAGE %s", funcDef.Language)
 	PrintFunctionModifiers(metadataFile, funcDef)
+	if hasSqlBody {
+		metadataFile.MustPrintf("\n%s", funcDef.SqlBody)
+	}
 	metadataFile.MustPrintln(";")
 
 	section, entry := funcDef.GetMetadataEntry()
