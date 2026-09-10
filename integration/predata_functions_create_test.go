@@ -528,6 +528,11 @@ var _ = Describe("backup integration create statement tests", func() {
 	})
 	Describe("PrintCreateLanguageStatements", func() {
 		It("creates procedural languages", func() {
+			if connectionPool.Version.AtLeast("19") {
+				// WHPG19 ships plpython3u as a preinstalled extension; standalone
+				// CREATE/DROP LANGUAGE of it is no longer possible.
+				Skip("procedural languages are extension-managed on WHPG19")
+			}
 			plpythonString := "plpython"
 			if connectionPool.Version.AtLeast("7") {
 				plpythonString = "plpython3"
@@ -575,6 +580,8 @@ var _ = Describe("backup integration create statement tests", func() {
 				Expect(resultExtensions).To(HaveLen(1))
 			} else {
 				// gp_toolkit is installed by default as an extension in GPDB7+
+				// (WHPG19 too: plpython3u ships available but isn't
+				// preinstalled/created by default, so it doesn't add to this count).
 				Expect(resultExtensions).To(HaveLen(2))
 			}
 			plperlMetadata := resultMetadataMap[plperlExtension.GetUniqueID()]
@@ -623,8 +630,14 @@ var _ = Describe("backup integration create statement tests", func() {
 	})
 	Describe("PrintCreateConversionStatements", func() {
 		It("creates conversions", func() {
-			convOne := backup.Conversion{Oid: 1, Schema: "public", Name: "conv_one", ForEncoding: "LATIN1", ToEncoding: "MULE_INTERNAL", ConversionFunction: "pg_catalog.latin1_to_mic", IsDefault: false}
-			convTwo := backup.Conversion{Oid: 0, Schema: "public", Name: "conv_two", ForEncoding: "LATIN1", ToEncoding: "MULE_INTERNAL", ConversionFunction: "pg_catalog.latin1_to_mic", IsDefault: true}
+			// PG19 removed the MULE_INTERNAL encoding; use a pair that still
+			// exists there while keeping the historical fixture elsewhere.
+			toEncoding, convFunc := "MULE_INTERNAL", "pg_catalog.latin1_to_mic"
+			if connectionPool.Version.AtLeast("19") {
+				toEncoding, convFunc = "UTF8", "pg_catalog.iso8859_1_to_utf8"
+			}
+			convOne := backup.Conversion{Oid: 1, Schema: "public", Name: "conv_one", ForEncoding: "LATIN1", ToEncoding: toEncoding, ConversionFunction: convFunc, IsDefault: false}
+			convTwo := backup.Conversion{Oid: 0, Schema: "public", Name: "conv_two", ForEncoding: "LATIN1", ToEncoding: toEncoding, ConversionFunction: convFunc, IsDefault: true}
 			conversions := []backup.Conversion{convOne, convTwo}
 			convMetadataMap := testutils.DefaultMetadataMap(toc.OBJ_CONVERSION, false, true, true, false)
 			convMetadata := convMetadataMap[convOne.GetUniqueID()]
@@ -667,8 +680,22 @@ var _ = Describe("backup integration create statement tests", func() {
 			resultWrappers := backup.GetForeignDataWrappers(connectionPool)
 
 			Expect(resultWrappers).To(HaveLen(2))
-			structmatcher.ExpectStructsToMatchExcluding(&foreignDataWrapperValidator, &resultWrappers[0], "Oid", "Validator")
-			structmatcher.ExpectStructsToMatchExcluding(&foreignDataWrapperOptions, &resultWrappers[1], "Oid", "Validator")
+			// The underlying query has no ORDER BY, so pg_foreign_data_wrapper's
+			// physical scan order (and thus slice order) isn't guaranteed;
+			// match by name instead of by fixed index.
+			var resultValidator, resultOptions *backup.ForeignDataWrapper
+			for i := range resultWrappers {
+				switch resultWrappers[i].Name {
+				case "foreigndata1":
+					resultValidator = &resultWrappers[i]
+				case "foreigndata2":
+					resultOptions = &resultWrappers[i]
+				}
+			}
+			Expect(resultValidator).ToNot(BeNil())
+			Expect(resultOptions).ToNot(BeNil())
+			structmatcher.ExpectStructsToMatchExcluding(&foreignDataWrapperValidator, resultValidator, "Oid", "Validator")
+			structmatcher.ExpectStructsToMatchExcluding(&foreignDataWrapperOptions, resultOptions, "Oid", "Validator")
 		})
 	})
 	Describe("PrintCreateServerStatement", func() {

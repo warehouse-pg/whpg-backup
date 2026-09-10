@@ -114,6 +114,10 @@ var _ = Describe("backup integration create statement tests", func() {
 					baseType.Preferred = true
 					baseType.Collatable = true
 				}
+				if connectionPool.Version.AtLeast("19") {
+					// PG14+ rejects CREATE TYPE with ELEMENT but no SUBSCRIPT.
+					baseType.Subscript = "raw_array_subscript_handler"
+				}
 				metadata := testutils.DefaultMetadata(toc.OBJ_TYPE, false, true, true, includeSecurityLabels)
 				backup.PrintCreateBaseTypeStatement(backupfile, tocfile, baseType, metadata)
 

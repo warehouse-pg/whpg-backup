@@ -31,6 +31,10 @@ var _ = Describe("backup integration tests", func() {
 			Expect(deps[barEntry]).To(HaveKey(fooEntry))
 		})
 		It("constructs dependencies correctly for a table dependent on a protocol", func() {
+			if connectionPool.Version.AtLeast("19") {
+				// gps3ext.so (the s3 external protocol library) is not shipped with WHPG19.
+				Skip("s3 protocol fixture library gps3ext.so is not available on WHPG19")
+			}
 			testhelper.AssertQueryRuns(connectionPool, `CREATE FUNCTION public.read_from_s3() RETURNS integer
 		AS '$libdir/gps3ext.so', 's3_import'
 		LANGUAGE c STABLE NO SQL;`)
