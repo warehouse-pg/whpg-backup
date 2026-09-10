@@ -290,5 +290,17 @@ ALTER TYPE public.base_type
 				"ALTER COLLATION schema1.collation1 OWNER TO testrole;"}
 			testutils.AssertBufferContents(tocfile.PredataEntries, buffer, expectedStatements...)
 		})
+		It("prints an ICU collation statement with a locale and rules", func() {
+			collation := backup.Collation{Oid: 1, Name: "collation1", Schema: "schema1",
+				Provider: "i", Locale: "en-US", IcuRules: "&a < g"}
+			backup.PrintCreateCollationStatements(backupfile, tocfile, []backup.Collation{collation}, emptyMetadataMap)
+			testutils.AssertBufferContents(tocfile.PredataEntries, buffer, `CREATE COLLATION schema1.collation1 (LOCALE = 'en-US', PROVIDER = 'icu', RULES = '&a < g');`)
+		})
+		It("prints a builtin collation statement with a locale", func() {
+			collation := backup.Collation{Oid: 1, Name: "collation1", Schema: "schema1",
+				Provider: "b", Locale: "C.UTF-8"}
+			backup.PrintCreateCollationStatements(backupfile, tocfile, []backup.Collation{collation}, emptyMetadataMap)
+			testutils.AssertBufferContents(tocfile.PredataEntries, buffer, `CREATE COLLATION schema1.collation1 (LOCALE = 'C.UTF-8', PROVIDER = 'builtin');`)
+		})
 	})
 })

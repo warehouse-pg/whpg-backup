@@ -213,7 +213,14 @@ func PrintCreateRangeTypeStatement(metadataFile *utils.FileWithByteCount, objToc
 func PrintCreateCollationStatements(metadataFile *utils.FileWithByteCount, objToc *toc.TOC, collations []Collation, collationMetadata MetadataMap) {
 	for _, collation := range collations {
 		start := metadataFile.ByteCount
-		metadataFile.MustPrintf("\nCREATE COLLATION %s (LC_COLLATE = '%s', LC_CTYPE = '%s'", collation.FQN(), collation.Collate, collation.Ctype)
+		// A non-libc collation on PG17+ (WHPG19) has no LC_COLLATE/LC_CTYPE to
+		// reproduce; its single locale comes from colllocale instead, which is
+		// spelled LOCALE in CREATE COLLATION.
+		if collation.Locale != "" {
+			metadataFile.MustPrintf("\nCREATE COLLATION %s (LOCALE = '%s'", collation.FQN(), collation.Locale)
+		} else {
+			metadataFile.MustPrintf("\nCREATE COLLATION %s (LC_COLLATE = '%s', LC_CTYPE = '%s'", collation.FQN(), collation.Collate, collation.Ctype)
+		}
 		if collation.Provider != "" {
 			providerOption := ""
 			switch collation.Provider {
@@ -223,10 +230,15 @@ func PrintCreateCollationStatements(metadataFile *utils.FileWithByteCount, objTo
 				providerOption = "icu"
 			case "d":
 				providerOption = "default"
+			case "b": // PG17+ (WHPG19)
+				providerOption = "builtin"
 			default:
-				gplog.Fatal(errors.Errorf("Unexpected collation provider: expected 'c|i|d' got '%s'\n", collation.Provider), "")
+				gplog.Fatal(errors.Errorf("Unexpected collation provider: expected 'c|i|d|b' got '%s'\n", collation.Provider), "")
 			}
 			metadataFile.MustPrintf(", PROVIDER = '%s'", providerOption)
+		}
+		if collation.IcuRules != "" {
+			metadataFile.MustPrintf(", RULES = '%s'", collation.IcuRules)
 		}
 		if collation.IsDeterministic == "f" {
 			metadataFile.MustPrintf(", DETERMINISTIC = 'false'")
