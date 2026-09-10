@@ -63,6 +63,27 @@ GRANT TEMPORARY,CONNECT ON DATABASE testdb TO testrole;`,
 			backup.PrintCreateDatabaseStatement(backupfile, tocfile, emptyDB, db, emptyMetadataMap)
 			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `CREATE DATABASE testdb TEMPLATE template0 TABLESPACE test_tablespace ENCODING 'UTF8' LC_COLLATE 'en_US.utf-8' LC_CTYPE 'en_US.utf-8';`)
 		})
+		It("prints the locale provider and locale for an ICU database", func() {
+			db := backup.Database{Oid: 1, Name: "testdb", Tablespace: "pg_default",
+				LocProvider: "i", Locale: "en-US", IcuRules: "&a < g"}
+			emptyMetadataMap := backup.MetadataMap{}
+			backup.PrintCreateDatabaseStatement(backupfile, tocfile, emptyDB, db, emptyMetadataMap)
+			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `CREATE DATABASE testdb TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'en-US' ICU_RULES '&a < g';`)
+		})
+		It("prints the locale provider and locale for a builtin database", func() {
+			db := backup.Database{Oid: 1, Name: "testdb", Tablespace: "pg_default",
+				LocProvider: "b", Locale: "C.UTF-8"}
+			emptyMetadataMap := backup.MetadataMap{}
+			backup.PrintCreateDatabaseStatement(backupfile, tocfile, emptyDB, db, emptyMetadataMap)
+			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `CREATE DATABASE testdb TEMPLATE template0 LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8';`)
+		})
+		It("does not print the locale provider if it matches the default database", func() {
+			defaultDB := backup.Database{LocProvider: "c"}
+			db := backup.Database{Oid: 1, Name: "testdb", Tablespace: "pg_default", LocProvider: "c"}
+			emptyMetadataMap := backup.MetadataMap{}
+			backup.PrintCreateDatabaseStatement(backupfile, tocfile, defaultDB, db, emptyMetadataMap)
+			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `CREATE DATABASE testdb TEMPLATE template0;`)
+		})
 		It("does not print encoding information if it is the same as defaults", func() {
 			defaultDB := backup.Database{Oid: 0, Name: "", Tablespace: "", Encoding: "UTF8", Collate: "en_US.utf-8", CType: "en_US.utf-8"}
 			db := backup.Database{Oid: 1, Name: "testdb", Tablespace: "test_tablespace", Encoding: "UTF8", Collate: "en_US.utf-8", CType: "en_US.utf-8"}

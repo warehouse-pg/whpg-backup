@@ -35,6 +35,31 @@ func PrintCreateDatabaseStatement(metadataFile *utils.FileWithByteCount, tocfile
 	if db.Encoding != "" && (db.Encoding != defaultDB.Encoding) {
 		metadataFile.MustPrintf(" ENCODING '%s'", db.Encoding)
 	}
+	// PG15+ (WHPG19): reproduce a non-default locale provider along with the
+	// locale it reads, which for icu and builtin is datlocale rather than
+	// datcollate/datctype.  Emitted whenever either differs from the default
+	// database, since a matching provider can still carry a different locale.
+	if db.LocProvider != "" && (db.LocProvider != defaultDB.LocProvider || db.Locale != defaultDB.Locale) {
+		switch db.LocProvider {
+		case "c":
+			metadataFile.MustPrintf(" LOCALE_PROVIDER libc")
+		case "i":
+			metadataFile.MustPrintf(" LOCALE_PROVIDER icu")
+			if db.Locale != "" {
+				metadataFile.MustPrintf(" ICU_LOCALE '%s'", db.Locale)
+			}
+			if db.IcuRules != "" {
+				metadataFile.MustPrintf(" ICU_RULES '%s'", db.IcuRules)
+			}
+		case "b":
+			metadataFile.MustPrintf(" LOCALE_PROVIDER builtin")
+			if db.Locale != "" {
+				metadataFile.MustPrintf(" BUILTIN_LOCALE '%s'", db.Locale)
+			}
+		default:
+			gplog.Warn("Database %s has unrecognized locale provider '%s'; it will be restored with the default provider.", db.Name, db.LocProvider)
+		}
+	}
 	if db.Collate != "" && (db.Collate != defaultDB.Collate) {
 		metadataFile.MustPrintf(" LC_COLLATE '%s'", db.Collate)
 	}

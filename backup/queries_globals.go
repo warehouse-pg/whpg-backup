@@ -39,12 +39,15 @@ func GetSessionGUCs(connectionPool *dbconn.DBConn) SessionGUCs {
 }
 
 type Database struct {
-	Oid        uint32
-	Name       string
-	Tablespace string
-	Collate    string
-	CType      string
-	Encoding   string
+	Oid         uint32
+	Name        string
+	Tablespace  string
+	Collate     string
+	CType       string
+	Encoding    string
+	LocProvider string // WHPG19+
+	Locale      string // WHPG19+
+	IcuRules    string // WHPG19+
 }
 
 func (db Database) GetMetadataEntry() (string, toc.MetadataEntry) {
@@ -72,6 +75,14 @@ func GetDefaultDatabaseEncodingInfo(connectionPool *dbconn.DBConn) Database {
 	if connectionPool.Version.AtLeast("6") {
 		lcQuery = "datcollate AS collate, datctype AS ctype,"
 	}
+	// template0's own provider and locale, so that PrintCreateDatabaseStatement
+	// only spells them out for a database that actually diverges from it.
+	if connectionPool.Version.AtLeast("19") {
+		lcQuery += `
+		datlocprovider AS locprovider,
+		coalesce(datlocale, '') AS locale,
+		coalesce(daticurules, '') AS icurules,`
+	}
 
 	query := fmt.Sprintf(`
 	SELECT datname AS name,
@@ -90,6 +101,17 @@ func GetDatabaseInfo(connectionPool *dbconn.DBConn) Database {
 	lcQuery := ""
 	if connectionPool.Version.AtLeast("6") {
 		lcQuery = "datcollate AS collate, datctype AS ctype,"
+	}
+	// PG15+ (WHPG19) lets a database pick a locale provider other than libc,
+	// in which case the locale that actually governs it lives in datlocale
+	// (plus daticurules for ICU tailoring) rather than in datcollate/datctype.
+	// Those two stay populated regardless, so without the provider the database
+	// silently comes back as libc with a different collation.
+	if connectionPool.Version.AtLeast("19") {
+		lcQuery += `
+		datlocprovider AS locprovider,
+		coalesce(datlocale, '') AS locale,
+		coalesce(daticurules, '') AS icurules,`
 	}
 	query := fmt.Sprintf(`
 	SELECT d.oid,
