@@ -443,8 +443,11 @@ ALTER DEFAULT PRIVILEGES FOR ROLE testrole GRANT USAGE ON TABLES TO somerole WIT
 			Expect(result.MaintainWithGrant).To(BeTrue())
 		})
 		It("parses an ACL string containing a role with multiple privileges", func() {
-			aclStr := "testrole=arwdDxtm/gpadmin"
+			aclStr := "testrole=arwdDxt/gpadmin"
 			expected := testutils.DefaultACLForType("testrole", toc.OBJ_TABLE)
+			// The string above grants the seven privileges a relation had
+			// before PG17, so it never carries MAINTAIN whatever the version.
+			expected.Maintain = false
 			result := backup.ParseACL(aclStr)
 			structmatcher.ExpectStructsToMatch(&expected, result)
 		})

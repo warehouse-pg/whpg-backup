@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/blang/semver"
 	"github.com/greenplum-db/gpbackup/backup"
 	"github.com/greenplum-db/gpbackup/filepath"
 	"github.com/greenplum-db/gpbackup/restore"
@@ -43,7 +44,39 @@ func SetupTestEnvironment() (*dbconn.DBConn, sqlmock.Sqlmock, *Buffer, *Buffer, 
 
 	SetupTestCluster()
 	backup.SetVersion("0.1.0")
+	SetTestVersion(connectionPool)
 	return connectionPool, mock, testStdout, testStderr, testLogfile
+}
+
+// testConnection is whichever connection the running suite describes.
+var testConnection *dbconn.DBConn
+
+// SetTestVersion tells the fixtures below which server they are describing.
+// SetupTestEnvironment calls it for the unit suites; the integration suite
+// builds its own connection and calls it from BeforeSuite.
+func SetTestVersion(connectionPool *dbconn.DBConn) {
+	testConnection = connectionPool
+}
+
+// relationPrivilegesIncludeMaintain reports whether a relation's full privilege
+// set includes MAINTAIN, which PG17 (WHPG19) added to ACL_ALL_RIGHTS_RELATION.
+// It decides what DefaultACLForType means by "all privileges on a table".
+//
+// The live connection is consulted first, because the integration suite
+// compares these fixtures against the ACL a real server hands back. The unit
+// suites fall through to the environment variable they are driven by: their
+// fixtures are built while Ginkgo is still constructing the spec tree, before
+// any BeforeEach has run and so before a connection exists.
+func relationPrivilegesIncludeMaintain() bool {
+	if testConnection != nil && testConnection.Version.VersionString != "" {
+		return testConnection.Version.AtLeast("19")
+	}
+	envVersion := os.Getenv("TEST_GPDB_VERSION")
+	if envVersion == "" {
+		return false
+	}
+	parsed, err := semver.Parse(envVersion)
+	return err == nil && parsed.Major >= 19
 }
 
 func SetupTestCluster() *cluster.Cluster {
@@ -285,7 +318,8 @@ func DefaultACLForType(grantee string, objType string) backup.ACL {
 		Create:     objType == toc.OBJ_DATABASE || objType == toc.OBJ_SCHEMA || objType == toc.OBJ_TABLESPACE,
 		Temporary:  objType == toc.OBJ_DATABASE,
 		Connect:    objType == toc.OBJ_DATABASE,
-		Maintain:   objType == toc.OBJ_TABLE || objType == toc.OBJ_VIEW || objType == toc.OBJ_MATERIALIZED_VIEW,
+		Maintain: relationPrivilegesIncludeMaintain() &&
+			(objType == toc.OBJ_TABLE || objType == toc.OBJ_VIEW || objType == toc.OBJ_MATERIALIZED_VIEW),
 	}
 }
 
@@ -304,7 +338,8 @@ func DefaultACLForTypeWithGrant(grantee string, objType string) backup.ACL {
 		CreateWithGrant:     objType == toc.OBJ_DATABASE || objType == toc.OBJ_SCHEMA || objType == toc.OBJ_TABLESPACE,
 		TemporaryWithGrant:  objType == toc.OBJ_DATABASE,
 		ConnectWithGrant:    objType == toc.OBJ_DATABASE,
-		MaintainWithGrant:   objType == toc.OBJ_TABLE || objType == toc.OBJ_VIEW || objType == toc.OBJ_MATERIALIZED_VIEW,
+		MaintainWithGrant: relationPrivilegesIncludeMaintain() &&
+			(objType == toc.OBJ_TABLE || objType == toc.OBJ_VIEW || objType == toc.OBJ_MATERIALIZED_VIEW),
 	}
 }
 
