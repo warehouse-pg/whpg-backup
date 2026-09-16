@@ -190,6 +190,9 @@ func PrintCreateRangeTypeStatement(metadataFile *utils.FileWithByteCount, objToc
 	start := metadataFile.ByteCount
 	metadataFile.MustPrintf("\n\nCREATE TYPE %s AS RANGE (\n\tSUBTYPE = %s", rangeType.FQN(), rangeType.SubType)
 
+	if rangeType.MultiRangeName != "" {
+		metadataFile.MustPrintf(",\n\tMULTIRANGE_TYPE_NAME = %s", rangeType.MultiRangeName)
+	}
 	if rangeType.SubTypeOpClass != "" {
 		metadataFile.MustPrintf(",\n\tSUBTYPE_OPCLASS = %s", rangeType.SubTypeOpClass)
 	}

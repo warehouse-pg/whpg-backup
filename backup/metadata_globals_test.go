@@ -421,6 +421,18 @@ ALTER ROLE "testRole2" WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICAT
 			backup.PrintRoleMembershipStatements(backupfile, tocfile, []backup.RoleMember{roleWith})
 			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `GRANT group TO rolewith WITH ADMIN OPTION GRANTED BY grantor;`)
 		})
+		It("prints the PG16+ grant options alongside ADMIN OPTION", func() {
+			member := backup.RoleMember{Role: "group", Member: "rolewith", Grantor: "grantor",
+				IsAdmin: true, InheritOption: "FALSE", SetOption: "FALSE"}
+			backup.PrintRoleMembershipStatements(backupfile, tocfile, []backup.RoleMember{member})
+			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `GRANT group TO rolewith WITH ADMIN OPTION, INHERIT FALSE, SET FALSE GRANTED BY grantor;`)
+		})
+		It("omits SET when it is true but still spells out INHERIT", func() {
+			member := backup.RoleMember{Role: "group", Member: "rolewith", Grantor: "",
+				IsAdmin: false, InheritOption: "TRUE", SetOption: "TRUE"}
+			backup.PrintRoleMembershipStatements(backupfile, tocfile, []backup.RoleMember{member})
+			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `GRANT group TO rolewith WITH INHERIT TRUE;`)
+		})
 		It("prints multiple roles", func() {
 			backup.PrintRoleMembershipStatements(backupfile, tocfile, []backup.RoleMember{roleWith, roleWithout})
 			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer,

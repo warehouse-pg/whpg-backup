@@ -252,6 +252,15 @@ ALTER TYPE public.base_type
 	SUBTYPE = test_subtype_schema.test_subtype
 );`)
 		})
+		It("prints a range type with a multirange type name", func() {
+			rangeType := basicRangeType
+			rangeType.MultiRangeName = "public.my_multirange"
+			backup.PrintCreateRangeTypeStatement(backupfile, tocfile, rangeType, emptyMetadata)
+			testutils.AssertBufferContents(tocfile.PredataEntries, buffer, `CREATE TYPE public.rangetype AS RANGE (
+	SUBTYPE = test_subtype_schema.test_subtype,
+	MULTIRANGE_TYPE_NAME = public.my_multirange
+);`)
+		})
 		It("prints a complex range type", func() {
 			backup.PrintCreateRangeTypeStatement(backupfile, tocfile, complexRangeType, emptyMetadata)
 			testutils.ExpectEntry(tocfile.PredataEntries, 0, "public", "", "rangetype", toc.OBJ_TYPE)

@@ -397,6 +397,7 @@ type RangeType struct {
 	SubTypeOpClass string
 	Canonical      string
 	SubTypeDiff    string
+	MultiRangeName string // WHPG19+
 }
 
 func (t RangeType) GetMetadataEntry() (string, toc.MetadataEntry) {
@@ -413,8 +414,20 @@ func (t RangeType) FQN() string {
 
 func GetRangeTypes(connectionPool *dbconn.DBConn) []RangeType {
 	gplog.Verbose("Retrieving range types")
+	// PG14+ (WHPG19) gives every range type a companion multirange type, whose
+	// name CREATE TYPE ... AS RANGE can set with MULTIRANGE_TYPE_NAME. Without
+	// it a custom name restores as the generated default, and anything that
+	// referred to the custom name -- a column, a function signature -- fails.
+	// Spell the name out unconditionally, as pg_dump's dumpRangeType() does,
+	// rather than reimplementing makeMultirangeTypeName()'s truncation rules to
+	// decide whether it is the default.
+	multiRangeNameAtt := ""
+	if connectionPool.Version.AtLeast("19") {
+		multiRangeNameAtt = "format_type(r.rngmultitypid, NULL) AS multirangename,"
+	}
 	query := fmt.Sprintf(`
 	SELECT t.oid,
+		%s
 		quote_ident(n.nspname) AS schema,
 		quote_ident(t.typname) AS name,
 		format_type(st.oid, st.typtypmod) AS subtype,
@@ -444,7 +457,7 @@ func GetRangeTypes(connectionPool *dbconn.DBConn) []RangeType {
 		LEFT JOIN pg_namespace nopc ON nopc.oid = opc.opcnamespace
 	WHERE %s
 		AND t.typtype = 'r'
-		AND %s`, SchemaFilterClause("n"), ExtensionFilterClause("t"))
+		AND %s`, multiRangeNameAtt, SchemaFilterClause("n"), ExtensionFilterClause("t"))
 
 	results := make([]RangeType, 0)
 	err := connectionPool.Select(&results, query)

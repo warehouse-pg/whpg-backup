@@ -184,6 +184,17 @@ ALTER TABLE ONLY public.tablename ALTER COLUMN i SET STORAGE PLAIN;`)
 
 ALTER TABLE ONLY public.tablename ALTER COLUMN i SET (n_distinct=1);`)
 			})
+			It("prints a CREATE TABLE block followed by an ALTER COLUMN ... SET COMPRESSION statement", func() {
+				// PG14+ (WHPG19): an explicit TOAST compression method.
+				colCompressed := backup.ColumnDefinition{Oid: 0, Num: 1, Name: "i", Type: "text", StatTarget: -1, Compression: "lz4"}
+				testTable.ColumnDefs = []backup.ColumnDefinition{colCompressed}
+				backup.PrintRegularTableCreateStatement(backupfile, tocfile, testTable)
+				testutils.AssertBufferContents(tocfile.PredataEntries, buffer, `CREATE TABLE public.tablename (
+	i text
+) DISTRIBUTED RANDOMLY;
+
+ALTER TABLE ONLY public.tablename ALTER COLUMN i SET COMPRESSION lz4;`)
+			})
 			It("prints a CREATE TABLE block with one line with regular attribute and a line with generated attribute", func() {
 				col := []backup.ColumnDefinition{rowOne, rowTwoGenerated}
 				testTable.ColumnDefs = col

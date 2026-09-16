@@ -527,6 +527,9 @@ type RoleMember struct {
 	Member  string
 	Grantor string
 	IsAdmin bool
+	// WHPG19+. Empty on older majors, where the grant carries no such option.
+	InheritOption string
+	SetOption     string
 }
 
 func (rm RoleMember) GetMetadataEntry() (string, toc.MetadataEntry) {
@@ -550,16 +553,26 @@ func GetRoleMembers(connectionPool *dbconn.DBConn) []RoleMember {
 		whereClause = ``
 	}
 
+	// PG16+ (WHPG19) records two more per-grant options alongside admin_option.
+	// Without them a GRANT ... WITH INHERIT FALSE / SET FALSE comes back with
+	// the defaults, quietly widening what the member can do.
+	grantOptionAtts := ""
+	if connectionPool.Version.AtLeast("19") {
+		grantOptionAtts = `CASE WHEN pga.inherit_option THEN 'TRUE' ELSE 'FALSE' END AS inheritoption,
+		CASE WHEN pga.set_option THEN 'TRUE' ELSE 'FALSE' END AS setoption,`
+	}
+
 	query := fmt.Sprintf(`
 	SELECT quote_ident(pg_get_userbyid(pga.roleid)) AS role,
 		quote_ident(pg_get_userbyid(pga.member)) AS member,
 		CASE WHEN pg_get_userbyid(pga.grantor) like 'unknown (OID='||pga.grantor::regclass||')'
 		THEN '' ELSE quote_ident(pg_get_userbyid(pga.grantor))
 		END AS grantor,
+		%s
 		admin_option AS isadmin
 	FROM pg_auth_members pga
 	% s
-	ORDER BY roleid, member`, whereClause)
+	ORDER BY roleid, member`, grantOptionAtts, whereClause)
 
 	results := make([]RoleMember, 0)
 	err := connectionPool.Select(&results, query)

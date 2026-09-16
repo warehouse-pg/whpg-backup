@@ -240,12 +240,14 @@ func GetOperatorClassOperators(connectionPool *dbconn.DBConn) map[uint32][]Opera
 	err := connectionPool.Select(&results, query)
 	gplog.FatalOnError(err)
 
-	// PG13+ (WHPG19) records a GiST/GIN/SP-GiST opclass's OPERATOR members as
+	// PG14+ (WHPG19) records a GiST/GIN/SP-GiST opclass's OPERATOR members as
 	// depending on the operator FAMILY even when they were declared inline in
 	// CREATE OPERATOR CLASS -- see the comment above the operator loop in
-	// gistvalidate(). The pg_depend query above therefore returns nothing for
-	// them, and since gpbackup only ever emits a bare CREATE OPERATOR FAMILY
-	// and never dumps family members, those operators would be lost outright.
+	// gistvalidate(), reached through the amadjustmembers callback added in
+	// PG14 (9f9682783, reachable from REL_14_0 but not REL_13_0). The
+	// pg_depend query above therefore returns nothing for them, and since
+	// gpbackup only ever emits a bare CREATE OPERATOR FAMILY and never dumps
+	// family members, those operators would be lost outright.
 	// Recover them from the family, and merge rather than replace: btree and
 	// hash still depend on the opclass (nbtvalidate/hashvalidate), and that
 	// attribution is exact where it exists.

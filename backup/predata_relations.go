@@ -251,6 +251,11 @@ func printAlterColumnStatements(metadataFile *utils.FileWithByteCount, table Tab
 		if column.Options != "" {
 			metadataFile.MustPrintf("\nALTER TABLE ONLY %s ALTER COLUMN %s SET (%s);", table.FQN(), column.Name, column.Options)
 		}
+		// PG14+ (WHPG19). Emitted as its own ALTER, the way pg_dump does it,
+		// rather than inline in the column definition.
+		if column.Compression != "" {
+			metadataFile.MustPrintf("\nALTER TABLE ONLY %s ALTER COLUMN %s SET COMPRESSION %s;", table.FQN(), column.Name, column.Compression)
+		}
 	}
 }
 

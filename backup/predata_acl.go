@@ -52,6 +52,9 @@ type ACL struct {
 	TemporaryWithGrant  bool
 	Connect             bool
 	ConnectWithGrant    bool
+	// PG17+ (WHPG19), ACL character 'm'.
+	Maintain          bool
+	MaintainWithGrant bool
 }
 
 type MetadataMap map[UniqueID]ObjectMetadata
@@ -235,6 +238,8 @@ func ParseACL(aclStr string) *ACL {
 				acl.Temporary = true
 			case 'c':
 				acl.Connect = true
+			case 'm':
+				acl.Maintain = true
 			case '*':
 				switch lastChar {
 				case 'a':
@@ -273,6 +278,9 @@ func ParseACL(aclStr string) *ACL {
 				case 'c':
 					acl.Connect = false
 					acl.ConnectWithGrant = true
+				case 'm':
+					acl.Maintain = false
+					acl.MaintainWithGrant = true
 				}
 			}
 			lastChar = char
@@ -376,6 +384,13 @@ func createPrivilegeStrings(acl ACL, objectType string) (string, string) {
 		hasAllPrivileges = acl.Select && acl.Insert && acl.Update && acl.Delete && acl.Truncate && acl.References && acl.Trigger
 		hasAllPrivilegesWithGrant = acl.SelectWithGrant && acl.InsertWithGrant && acl.UpdateWithGrant && acl.DeleteWithGrant &&
 			acl.TruncateWithGrant && acl.ReferencesWithGrant && acl.TriggerWithGrant
+		// PG17+ added MAINTAIN to ACL_ALL_RIGHTS_RELATION. Without this a
+		// grantee holding only the older seven would still be written as GRANT
+		// ALL, and would come back holding MAINTAIN as well.
+		if connectionPool.Version.AtLeast("19") {
+			hasAllPrivileges = hasAllPrivileges && acl.Maintain
+			hasAllPrivilegesWithGrant = hasAllPrivilegesWithGrant && acl.MaintainWithGrant
+		}
 	case toc.OBJ_TABLESPACE:
 		hasAllPrivileges = acl.Create
 		hasAllPrivilegesWithGrant = acl.CreateWithGrant
@@ -407,6 +422,11 @@ func createPrivilegeStrings(acl ACL, objectType string) (string, string) {
 		}
 		if acl.Trigger {
 			privList = append(privList, "TRIGGER")
+		}
+		// Gated for the same reason as the ALL check above: MAINTAIN does not
+		// exist before PG17, so nothing should mention it on an older major.
+		if acl.Maintain && connectionPool.Version.AtLeast("19") {
+			privList = append(privList, "MAINTAIN")
 		}
 		/*
 		 * We skip checking whether acl.Execute is set here because only Functions have Execute,
@@ -450,6 +470,9 @@ func createPrivilegeStrings(acl ACL, objectType string) (string, string) {
 		}
 		if acl.TriggerWithGrant {
 			privWithGrantList = append(privWithGrantList, "TRIGGER")
+		}
+		if acl.MaintainWithGrant && connectionPool.Version.AtLeast("19") {
+			privWithGrantList = append(privWithGrantList, "MAINTAIN")
 		}
 		// The comment above regarding Execute applies to ExecuteWithGrant as well.
 		if acl.UsageWithGrant {

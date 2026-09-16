@@ -429,8 +429,23 @@ func PrintRoleMembershipStatements(metadataFile *utils.FileWithByteCount, objToc
 	for _, roleMember := range roleMembers {
 		start := metadataFile.ByteCount
 		metadataFile.MustPrintf("\nGRANT %s TO %s", roleMember.Role, roleMember.Member)
+		// Built as a list because PG16+ (WHPG19) can carry INHERIT and SET
+		// alongside ADMIN OPTION under a single WITH. On older majors only the
+		// admin option is ever populated, so this still reads as it always did.
+		// Mirrors the option buffer in pg_dumpall's dumpRoleMembership():
+		// INHERIT is always spelled out, SET only when it is false.
+		options := make([]string, 0)
 		if roleMember.IsAdmin {
-			metadataFile.MustPrintf(" WITH ADMIN OPTION")
+			options = append(options, "ADMIN OPTION")
+		}
+		if roleMember.InheritOption != "" {
+			options = append(options, fmt.Sprintf("INHERIT %s", roleMember.InheritOption))
+		}
+		if roleMember.SetOption == "FALSE" {
+			options = append(options, "SET FALSE")
+		}
+		if len(options) > 0 {
+			metadataFile.MustPrintf(" WITH %s", strings.Join(options, ", "))
 		}
 		if roleMember.Grantor != "" {
 			metadataFile.MustPrintf(" GRANTED BY %s", roleMember.Grantor)

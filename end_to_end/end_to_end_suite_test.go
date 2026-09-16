@@ -1823,7 +1823,7 @@ var _ = Describe("backup and restore end to end tests", func() {
 				Expect(tableCopyCount).To(Equal(strconv.Itoa(1)))
 			})
 			It("does not retrieve trigger constraints  with the rest of the constraints", func() {
-				if backupConn.Version.Is("7") || backupConn.Version.AtLeast("19") {
+				if testutils.IsGPDB7OrLater(backupConn) {
 					// TODO: Remove this once support is added
 					// WHPG19 hits the identical gram.y restriction (confirmed
 					// live: "ERROR: Triggers for statements are not yet

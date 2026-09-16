@@ -285,6 +285,7 @@ func DefaultACLForType(grantee string, objType string) backup.ACL {
 		Create:     objType == toc.OBJ_DATABASE || objType == toc.OBJ_SCHEMA || objType == toc.OBJ_TABLESPACE,
 		Temporary:  objType == toc.OBJ_DATABASE,
 		Connect:    objType == toc.OBJ_DATABASE,
+		Maintain:   objType == toc.OBJ_TABLE || objType == toc.OBJ_VIEW || objType == toc.OBJ_MATERIALIZED_VIEW,
 	}
 }
 
@@ -303,6 +304,7 @@ func DefaultACLForTypeWithGrant(grantee string, objType string) backup.ACL {
 		CreateWithGrant:     objType == toc.OBJ_DATABASE || objType == toc.OBJ_SCHEMA || objType == toc.OBJ_TABLESPACE,
 		TemporaryWithGrant:  objType == toc.OBJ_DATABASE,
 		ConnectWithGrant:    objType == toc.OBJ_DATABASE,
+		MaintainWithGrant:   objType == toc.OBJ_TABLE || objType == toc.OBJ_VIEW || objType == toc.OBJ_MATERIALIZED_VIEW,
 	}
 }
 
@@ -559,6 +561,16 @@ func SkipIfBefore7(connectionPool *dbconn.DBConn) {
 	if connectionPool.Version.Before("7") {
 		Skip("Test only applicable to GPDB7 and above")
 	}
+}
+
+// IsGPDB7OrLater reports whether the server is GPDB7 or any later major.
+// Written out rather than spelled Version.AtLeast("7") because WHPG19 reports
+// major 19, so "7 or later" has to name both the 7 line and everything above
+// it -- and a bare AtLeast("7") would also be true for a hypothetical 8.
+// Having it in one place keeps the specs from drifting apart when the next
+// major lands.
+func IsGPDB7OrLater(connectionPool *dbconn.DBConn) bool {
+	return connectionPool.Version.Is("7") || connectionPool.Version.AtLeast("19")
 }
 
 // SkipIfNoS3Protocol skips a spec that needs the s3 external protocol library.

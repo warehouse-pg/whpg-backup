@@ -245,6 +245,7 @@ type ColumnDefinition struct {
 	SecurityLabelProvider string
 	SecurityLabel         string
 	AttGenerated          string
+	Compression           string // WHPG19+
 	IsInherited           bool
 }
 
@@ -350,6 +351,15 @@ func GetColumnDefinitions(connectionPool *dbconn.DBConn) map[uint32][]ColumnDefi
 	ORDER BY a.attrelid, a.attnum`, relationAndSchemaFilterClause())
 
 	// In GPDB7+ we do not want to exclude child partitions, they function as separate tables.
+	// PG14+ (WHPG19) lets a column pick its TOAST compression method.
+	// attcompression is '\0' when unset, 'p' for pglz and 'l' for lz4; a column
+	// left at the default keeps '\0' and needs nothing emitted, but an explicit
+	// choice has to be reproduced or an lz4 column silently comes back as pglz.
+	compressionAtt := "'' AS compression,"
+	if connectionPool.Version.AtLeast("19") {
+		compressionAtt = `CASE a.attcompression WHEN 'p' THEN 'pglz' WHEN 'l' THEN 'lz4' ELSE '' END AS compression,`
+	}
+
 	// Cannot use unnest() in CASE statements anymore in GPDB 7+ so convert
 	// it to a LEFT JOIN LATERAL. We do not use LEFT JOIN LATERAL for GPDB 6
 	// because the CASE unnest() logic is more performant.
@@ -362,6 +372,7 @@ func GetColumnDefinitions(connectionPool *dbconn.DBConn) map[uint32][]ColumnDefi
 		pg_catalog.format_type(t.oid,a.atttypmod) AS type,
 		coalesce(pg_catalog.array_to_string(e.attoptions, ','), '') AS encoding,
 		coalesce(a.attstattarget, -1) AS attstattarget,
+		%s
 		CASE WHEN a.attstorage != t.typstorage THEN a.attstorage ELSE '' END AS storagetype,
 		coalesce('('||pg_catalog.pg_get_expr(ad.adbin, ad.adrelid)||')', '') AS defaultval,
 		coalesce(d.description, '') AS comment,
@@ -393,7 +404,7 @@ func GetColumnDefinitions(connectionPool *dbconn.DBConn) map[uint32][]ColumnDefi
 		AND c.reltype <> 0
 		AND a.attnum > 0::pg_catalog.int2
 		AND a.attisdropped = 'f'
-	ORDER BY a.attrelid, a.attnum`, relationAndSchemaFilterClause())
+	ORDER BY a.attrelid, a.attnum`, compressionAtt, relationAndSchemaFilterClause())
 
 	query := ``
 	if connectionPool.Version.Before("6") {
