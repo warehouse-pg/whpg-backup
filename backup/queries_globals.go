@@ -530,9 +530,9 @@ type RoleMember struct {
 	// WHPG19+. Empty on older majors, where the grant carries no such option.
 	InheritOption string
 	SetOption     string
-	// WHPG19+. Whether the grantor is a superuser, which decides whether the
-	// grant can be replayed before the grantor's own membership.
-	GrantorIsSuper bool
+	// WHPG19+. Whether the grantor is the bootstrap superuser, the only role
+	// whose grants can be replayed before its own membership on the role.
+	GrantorIsBootstrapSuper bool
 }
 
 func (rm RoleMember) GetMetadataEntry() (string, toc.MetadataEntry) {
@@ -563,7 +563,7 @@ func GetRoleMembers(connectionPool *dbconn.DBConn) []RoleMember {
 	if connectionPool.Version.AtLeast("19") {
 		grantOptionAtts = `CASE WHEN pga.inherit_option THEN 'TRUE' ELSE 'FALSE' END AS inheritoption,
 		CASE WHEN pga.set_option THEN 'TRUE' ELSE 'FALSE' END AS setoption,
-		coalesce((SELECT rolsuper FROM pg_authid WHERE oid = pga.grantor), false) AS grantorissuper,`
+		(pga.grantor = 10::oid) AS grantorisbootstrapsuper,`
 	}
 
 	query := fmt.Sprintf(`
@@ -591,11 +591,17 @@ func GetRoleMembers(connectionPool *dbconn.DBConn) []RoleMember {
 // actually replay.
 //
 // PG16+ requires the role named by GRANTED BY to hold ADMIN OPTION on the role
-// being granted at the moment the grant is replayed, so a grant attributed to a
-// non-superuser grantor must follow that grantor's own ADMIN OPTION grant. The
-// catalog order the query asks for -- roleid, member -- says nothing about
-// that: the two rows share a roleid, so it falls to the members' OIDs, and a
-// member that happens to predate its grantor restores first and fails.
+// being granted at the moment the grant is replayed, so such a grant must
+// follow that grantor's own ADMIN OPTION grant. The catalog order the query
+// asks for -- roleid, member -- says nothing about that: the two rows share a
+// roleid, so it falls to the members' OIDs, and a member that happens to
+// predate its grantor restores first and fails.
+//
+// Only the bootstrap superuser is exempt, and being a superuser is not enough:
+// check_role_grantor() skips the check for BOOTSTRAP_SUPERUSERID alone, and the
+// select_best_admin() it defers to otherwise is documented as ignoring
+// super-userness. pg_dumpall compares the recorded grantor against
+// BOOTSTRAP_SUPERUSERID for the same reason.
 //
 // Same shape as pg_dumpall's dumpRoleMembership(): repeatedly emit whatever has
 // become replayable, and if a pass makes no progress emit the remainder in
@@ -620,7 +626,7 @@ func OrderRoleMembersForRestore(roleMembers []RoleMember) []RoleMember {
 			deferred := make([]RoleMember, 0, len(remaining))
 			progressed := false
 			for _, member := range remaining {
-				if member.Grantor == "" || member.GrantorIsSuper || canGrant[member.Grantor] {
+				if member.Grantor == "" || member.GrantorIsBootstrapSuper || canGrant[member.Grantor] {
 					ordered = append(ordered, member)
 					if member.IsAdmin {
 						canGrant[member.Member] = true

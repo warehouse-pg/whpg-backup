@@ -416,17 +416,29 @@ ALTER ROLE "testRole2" WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICAT
 		It("moves a grant behind the admin grant its grantor depends on", func() {
 			members := []backup.RoleMember{
 				{Role: "usergroup", Member: "testuser", Grantor: "testrole", IsAdmin: false},
-				{Role: "usergroup", Member: "testrole", Grantor: "gpadmin", IsAdmin: true, GrantorIsSuper: true},
+				{Role: "usergroup", Member: "testrole", Grantor: "gpadmin", IsAdmin: true, GrantorIsBootstrapSuper: true},
 			}
 			ordered := backup.OrderRoleMembersForRestore(members)
 			Expect(ordered).To(HaveLen(2))
 			Expect(ordered[0].Member).To(Equal("testrole"))
 			Expect(ordered[1].Member).To(Equal("testuser"))
 		})
+		It("still defers a grant whose grantor is a superuser but not the bootstrap one", func() {
+			// check_role_grantor() exempts BOOTSTRAP_SUPERUSERID alone, and the
+			// select_best_admin() it otherwise defers to ignores super-userness,
+			// so testrole being SUPERUSER does not let this grant go first.
+			members := []backup.RoleMember{
+				{Role: "usergroup", Member: "testuser", Grantor: "testrole", GrantorIsBootstrapSuper: false},
+				{Role: "usergroup", Member: "testrole", Grantor: "gpadmin", IsAdmin: true, GrantorIsBootstrapSuper: true},
+			}
+			ordered := backup.OrderRoleMembersForRestore(members)
+			Expect(ordered[0].Member).To(Equal("testrole"))
+			Expect(ordered[1].Member).To(Equal("testuser"))
+		})
 		It("leaves an already-replayable order alone", func() {
 			members := []backup.RoleMember{
-				{Role: "usergroup", Member: "alice", Grantor: "gpadmin", GrantorIsSuper: true},
-				{Role: "usergroup", Member: "bob", Grantor: "gpadmin", GrantorIsSuper: true},
+				{Role: "usergroup", Member: "alice", Grantor: "gpadmin", GrantorIsBootstrapSuper: true},
+				{Role: "usergroup", Member: "bob", Grantor: "gpadmin", GrantorIsBootstrapSuper: true},
 			}
 			ordered := backup.OrderRoleMembersForRestore(members)
 			Expect(ordered[0].Member).To(Equal("alice"))
@@ -434,9 +446,9 @@ ALTER ROLE "testRole2" WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICAT
 		})
 		It("only orders within a role, keeping the roles in catalog order", func() {
 			members := []backup.RoleMember{
-				{Role: "groupone", Member: "alice", Grantor: "gpadmin", GrantorIsSuper: true},
+				{Role: "groupone", Member: "alice", Grantor: "gpadmin", GrantorIsBootstrapSuper: true},
 				{Role: "grouptwo", Member: "carol", Grantor: "dave", IsAdmin: false},
-				{Role: "grouptwo", Member: "dave", Grantor: "gpadmin", IsAdmin: true, GrantorIsSuper: true},
+				{Role: "grouptwo", Member: "dave", Grantor: "gpadmin", IsAdmin: true, GrantorIsBootstrapSuper: true},
 			}
 			ordered := backup.OrderRoleMembersForRestore(members)
 			Expect(ordered[0].Role).To(Equal("groupone"))
