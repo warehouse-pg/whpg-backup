@@ -530,6 +530,9 @@ type RoleMember struct {
 	// WHPG19+. Empty on older majors, where the grant carries no such option.
 	InheritOption string
 	SetOption     string
+	// WHPG19+. Whether the grantor is a superuser, which decides whether the
+	// grant can be replayed before the grantor's own membership.
+	GrantorIsSuper bool
 }
 
 func (rm RoleMember) GetMetadataEntry() (string, toc.MetadataEntry) {
@@ -559,7 +562,8 @@ func GetRoleMembers(connectionPool *dbconn.DBConn) []RoleMember {
 	grantOptionAtts := ""
 	if connectionPool.Version.AtLeast("19") {
 		grantOptionAtts = `CASE WHEN pga.inherit_option THEN 'TRUE' ELSE 'FALSE' END AS inheritoption,
-		CASE WHEN pga.set_option THEN 'TRUE' ELSE 'FALSE' END AS setoption,`
+		CASE WHEN pga.set_option THEN 'TRUE' ELSE 'FALSE' END AS setoption,
+		coalesce((SELECT rolsuper FROM pg_authid WHERE oid = pga.grantor), false) AS grantorissuper,`
 	}
 
 	query := fmt.Sprintf(`
@@ -577,7 +581,66 @@ func GetRoleMembers(connectionPool *dbconn.DBConn) []RoleMember {
 	results := make([]RoleMember, 0)
 	err := connectionPool.Select(&results, query)
 	gplog.FatalOnError(err)
+	if connectionPool.Version.AtLeast("19") {
+		return OrderRoleMembersForRestore(results)
+	}
 	return results
+}
+
+// OrderRoleMembersForRestore puts role grants into an order the restore can
+// actually replay.
+//
+// PG16+ requires the role named by GRANTED BY to hold ADMIN OPTION on the role
+// being granted at the moment the grant is replayed, so a grant attributed to a
+// non-superuser grantor must follow that grantor's own ADMIN OPTION grant. The
+// catalog order the query asks for -- roleid, member -- says nothing about
+// that: the two rows share a roleid, so it falls to the members' OIDs, and a
+// member that happens to predate its grantor restores first and fails.
+//
+// Same shape as pg_dumpall's dumpRoleMembership(): repeatedly emit whatever has
+// become replayable, and if a pass makes no progress emit the remainder in
+// catalog order rather than dropping grants on the floor.
+func OrderRoleMembersForRestore(roleMembers []RoleMember) []RoleMember {
+	// A grant is only constrained relative to other grants of the same role.
+	membersByRole := make(map[string][]RoleMember)
+	roleOrder := make([]string, 0)
+	for _, member := range roleMembers {
+		if _, seen := membersByRole[member.Role]; !seen {
+			roleOrder = append(roleOrder, member.Role)
+		}
+		membersByRole[member.Role] = append(membersByRole[member.Role], member)
+	}
+
+	ordered := make([]RoleMember, 0, len(roleMembers))
+	for _, role := range roleOrder {
+		remaining := membersByRole[role]
+		// Roles known to hold ADMIN OPTION on this role by the time we get here.
+		canGrant := make(map[string]bool)
+		for len(remaining) > 0 {
+			deferred := make([]RoleMember, 0, len(remaining))
+			progressed := false
+			for _, member := range remaining {
+				if member.Grantor == "" || member.GrantorIsSuper || canGrant[member.Grantor] {
+					ordered = append(ordered, member)
+					if member.IsAdmin {
+						canGrant[member.Member] = true
+					}
+					progressed = true
+				} else {
+					deferred = append(deferred, member)
+				}
+			}
+			if !progressed {
+				// Nothing left can be justified from this role's own
+				// membership -- a grantor that is not a member of it, say.
+				// Emit as-is and let the restore report it.
+				ordered = append(ordered, deferred...)
+				break
+			}
+			remaining = deferred
+		}
+	}
+	return ordered
 }
 
 type Tablespace struct {

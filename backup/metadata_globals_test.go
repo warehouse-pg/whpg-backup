@@ -9,6 +9,7 @@ import (
 	"github.com/warehouse-pg/common-go-libs/testhelper"
 
 	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("backup/metadata_globals tests", func() {
@@ -406,6 +407,51 @@ ALTER ROLE "testRole2" WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICAT
 				`ALTER ROLE "testRole2" DENY BETWEEN DAY 0 TIME '13:30:00' AND DAY 3 TIME '14:30:00';`,
 				`ALTER ROLE "testRole2" DENY BETWEEN DAY 5 TIME '00:00:00' AND DAY 5 TIME '24:00:00';`}
 			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, expectedStatements...)
+		})
+	})
+	Describe("OrderRoleMembersForRestore", func() {
+		// PG16+ requires the role named by GRANTED BY to already hold ADMIN
+		// OPTION on the role being granted, so a grant attributed to a
+		// non-superuser grantor has to follow that grantor's own admin grant.
+		It("moves a grant behind the admin grant its grantor depends on", func() {
+			members := []backup.RoleMember{
+				{Role: "usergroup", Member: "testuser", Grantor: "testrole", IsAdmin: false},
+				{Role: "usergroup", Member: "testrole", Grantor: "gpadmin", IsAdmin: true, GrantorIsSuper: true},
+			}
+			ordered := backup.OrderRoleMembersForRestore(members)
+			Expect(ordered).To(HaveLen(2))
+			Expect(ordered[0].Member).To(Equal("testrole"))
+			Expect(ordered[1].Member).To(Equal("testuser"))
+		})
+		It("leaves an already-replayable order alone", func() {
+			members := []backup.RoleMember{
+				{Role: "usergroup", Member: "alice", Grantor: "gpadmin", GrantorIsSuper: true},
+				{Role: "usergroup", Member: "bob", Grantor: "gpadmin", GrantorIsSuper: true},
+			}
+			ordered := backup.OrderRoleMembersForRestore(members)
+			Expect(ordered[0].Member).To(Equal("alice"))
+			Expect(ordered[1].Member).To(Equal("bob"))
+		})
+		It("only orders within a role, keeping the roles in catalog order", func() {
+			members := []backup.RoleMember{
+				{Role: "groupone", Member: "alice", Grantor: "gpadmin", GrantorIsSuper: true},
+				{Role: "grouptwo", Member: "carol", Grantor: "dave", IsAdmin: false},
+				{Role: "grouptwo", Member: "dave", Grantor: "gpadmin", IsAdmin: true, GrantorIsSuper: true},
+			}
+			ordered := backup.OrderRoleMembersForRestore(members)
+			Expect(ordered[0].Role).To(Equal("groupone"))
+			Expect(ordered[1].Member).To(Equal("dave"))
+			Expect(ordered[2].Member).To(Equal("carol"))
+		})
+		It("emits a grant whose grantor never becomes available rather than dropping it", func() {
+			// A grantor that is not a member of the role at all: nothing can
+			// make it replayable, so it still has to reach the metadata file.
+			members := []backup.RoleMember{
+				{Role: "usergroup", Member: "testuser", Grantor: "someowner", IsAdmin: false},
+			}
+			ordered := backup.OrderRoleMembersForRestore(members)
+			Expect(ordered).To(HaveLen(1))
+			Expect(ordered[0].Member).To(Equal("testuser"))
 		})
 	})
 	Describe("PrintRoleMembershipStatements", func() {

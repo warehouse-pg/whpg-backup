@@ -187,6 +187,11 @@ var _ = Describe("backup integration create statement tests", func() {
 				resultTypes := backup.GetRangeTypes(connectionPool)
 
 				Expect(len(resultTypes)).To(Equal(1))
+				if connectionPool.Version.AtLeast("19") {
+					// The statement above names no multirange, so PG derives
+					// one: the range name with "range" replaced by "multirange".
+					rangeType.MultiRangeName = "public.textmultirange"
+				}
 				structmatcher.ExpectStructsToMatchExcluding(&rangeType, &resultTypes[0], "Oid")
 			})
 			It("creates a range type in a specific schema with a subtype diff function", func() {
@@ -210,6 +215,9 @@ var _ = Describe("backup integration create statement tests", func() {
 				resultTypes := backup.GetRangeTypes(connectionPool)
 
 				Expect(len(resultTypes)).To(Equal(1))
+				if connectionPool.Version.AtLeast("19") {
+					rangeType.MultiRangeName = "testschema.timemultirange"
+				}
 				structmatcher.ExpectStructsToMatchExcluding(&rangeType, &resultTypes[0], "Oid")
 			})
 		})

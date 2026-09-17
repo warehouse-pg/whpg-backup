@@ -421,9 +421,19 @@ func GetRangeTypes(connectionPool *dbconn.DBConn) []RangeType {
 	// Spell the name out unconditionally, as pg_dump's dumpRangeType() does,
 	// rather than reimplementing makeMultirangeTypeName()'s truncation rules to
 	// decide whether it is the default.
+	//
+	// Built from pg_type/pg_namespace rather than format_type(): that only
+	// schema-qualifies a type the current search_path cannot see, so it would
+	// depend on SetSessionGUCs() having set search_path to pg_catalog -- true
+	// today, but nothing here says so. DefineRange() resolves an unqualified
+	// MULTIRANGE_TYPE_NAME against the *restore* session's search_path rather
+	// than the range type's schema, so a bare name is not merely untidy.
 	multiRangeNameAtt := ""
+	multiRangeNameJoin := ""
 	if connectionPool.Version.AtLeast("19") {
-		multiRangeNameAtt = "format_type(r.rngmultitypid, NULL) AS multirangename,"
+		multiRangeNameAtt = "quote_ident(mn.nspname) || '.' || quote_ident(mt.typname) AS multirangename,"
+		multiRangeNameJoin = `JOIN pg_type mt ON mt.oid = r.rngmultitypid
+		JOIN pg_namespace mn ON mn.oid = mt.typnamespace`
 	}
 	query := fmt.Sprintf(`
 	SELECT t.oid,
@@ -451,13 +461,14 @@ func GetRangeTypes(connectionPool *dbconn.DBConn) []RangeType {
 		JOIN pg_type t ON t.oid = r.rngtypid
 		JOIN pg_namespace n ON t.typnamespace = n.oid
 		JOIN pg_type st ON st.oid = r.rngsubtype
+		%s
 		LEFT JOIN pg_collation c ON c.oid = r.rngcollation
 		LEFT JOIN pg_namespace nc ON nc.oid = c.collnamespace
 		LEFT JOIN pg_opclass opc ON opc.oid = r.rngsubopc
 		LEFT JOIN pg_namespace nopc ON nopc.oid = opc.opcnamespace
 	WHERE %s
 		AND t.typtype = 'r'
-		AND %s`, multiRangeNameAtt, SchemaFilterClause("n"), ExtensionFilterClause("t"))
+		AND %s`, multiRangeNameAtt, multiRangeNameJoin, SchemaFilterClause("n"), ExtensionFilterClause("t"))
 
 	results := make([]RangeType, 0)
 	err := connectionPool.Select(&results, query)

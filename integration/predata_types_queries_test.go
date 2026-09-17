@@ -289,6 +289,11 @@ var _ = Describe("backup integration tests", func() {
 				Collation:      "public.some_coll",
 				SubTypeOpClass: "pg_catalog.text_ops",
 			}
+			if connectionPool.Version.AtLeast("19") {
+				// PG14+ always names the companion multirange; the default is
+				// the range name with "range" replaced by "multirange".
+				expectedRangeType.MultiRangeName = "public.textmultirange"
+			}
 			structmatcher.ExpectStructsToMatchExcluding(&expectedRangeType, &results[0], "Oid")
 		})
 		It("returns a slice of a range type in a specific schema with a subtype diff function", func() {
@@ -312,6 +317,11 @@ var _ = Describe("backup integration tests", func() {
 				SubType:        "time without time zone",
 				SubTypeOpClass: "pg_catalog.time_ops",
 				SubTypeDiff:    "testschema.time_subtype_diff",
+			}
+			if connectionPool.Version.AtLeast("19") {
+				// Schema-qualified from the range type's own schema, not from
+				// whatever the session's search_path happens to be.
+				expectedRangeType.MultiRangeName = "testschema.timemultirange"
 			}
 			structmatcher.ExpectStructsToMatchExcluding(&expectedRangeType, &results[0], "Oid")
 		})
