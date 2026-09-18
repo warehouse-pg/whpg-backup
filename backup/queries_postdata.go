@@ -438,6 +438,18 @@ func GetTriggers(connectionPool *dbconn.DBConn) []TriggerDefinition {
 	constraintClause := "NOT tgisinternal"
 	if connectionPool.Version.Before("6") {
 		constraintClause = "tgisconstraint = 'f'"
+	} else if connectionPool.Version.AtLeast("19") {
+		// A row trigger on a partitioned table is cloned onto every child, and
+		// PG13+ records the clone with tgisinternal = isInternal (trigger.c
+		// stores the flag verbatim) plus a tgparentid link -- so for a user
+		// trigger the clones are NOT internal and this filter lets them
+		// through. Each child then gets its own CREATE TRIGGER, while the
+		// parent's statement already recreates the clones, and the restore
+		// fails with "trigger ... already exists". Match on the parent link
+		// instead, as pg_dump's getTriggers() does. tgparentid does not exist
+		// before PG13, hence the version gate rather than an unconditional
+		// clause.
+		constraintClause = "NOT tgisinternal AND t.tgparentid = 0"
 	}
 	query := fmt.Sprintf(`
 	SELECT t.oid AS oid,

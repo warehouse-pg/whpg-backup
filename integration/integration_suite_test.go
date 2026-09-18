@@ -67,6 +67,9 @@ var _ = BeforeSuite(func() {
 	_, _ = connectionPool.Exec("CREATE ROLE anothertestrole SUPERUSER")
 	backup.InitializeMetadataParams(connectionPool)
 	backup.SetConnection(connectionPool)
+	// The ACL fixtures in testutils are compared against what this server hands
+	// back, and the full privilege set for a relation differs by major version.
+	testutils.SetTestVersion(connectionPool)
 	segConfig := cluster.MustGetSegmentConfiguration(connectionPool)
 	testCluster = cluster.NewCluster(segConfig)
 	testhelper.AssertQueryRuns(connectionPool, "SET ROLE testrole")

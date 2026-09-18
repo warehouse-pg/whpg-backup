@@ -24,7 +24,26 @@ type Table struct {
 
 func (t Table) SkipDataBackup() bool {
 	def := t.TableDefinition
-	return def.IsExternal || (def.ForeignDef != ForeignTableDefinition{})
+	return def.IsExternal || (def.ForeignDef != ForeignTableDefinition{}) || t.hasOnlyGeneratedColumns()
+}
+
+// A table whose every column is generated holds no data to copy, and that
+// cannot be expressed as a COPY column list: an empty list is a syntax error,
+// and omitting the list makes COPY cover the generated column, which fails the
+// restore with "cannot be inserted into". PG18's virtual generated columns make
+// such a table easy to construct, so skip its data rather than write out a COPY
+// that cannot work. A table with no columns at all is left alone -- COPY
+// without a list is correct there.
+func (t Table) hasOnlyGeneratedColumns() bool {
+	if len(t.ColumnDefs) == 0 {
+		return false
+	}
+	for _, column := range t.ColumnDefs {
+		if column.AttGenerated == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func (t Table) GetMetadataEntry() (string, toc.MetadataEntry) {
@@ -226,6 +245,7 @@ type ColumnDefinition struct {
 	SecurityLabelProvider string
 	SecurityLabel         string
 	AttGenerated          string
+	Compression           string // WHPG19+
 	IsInherited           bool
 }
 
@@ -238,6 +258,12 @@ var storageTypeCodes = map[string]string{
 
 var attGeneratedCodes = map[string]string{
 	"s": "STORED",
+	// PG18+ (WHPG19) adds virtual generated columns.  Mapping the code matters
+	// twice over: the keyword is needed to reproduce the column, and an
+	// unmapped code reads as "not generated", which would both emit a plain
+	// DEFAULT and put the column into the COPY list -- see
+	// ConstructTableAttributesList -- even though it has no stored value.
+	"v": "VIRTUAL",
 }
 
 func GetColumnDefinitions(connectionPool *dbconn.DBConn) map[uint32][]ColumnDefinition {
@@ -325,6 +351,15 @@ func GetColumnDefinitions(connectionPool *dbconn.DBConn) map[uint32][]ColumnDefi
 	ORDER BY a.attrelid, a.attnum`, relationAndSchemaFilterClause())
 
 	// In GPDB7+ we do not want to exclude child partitions, they function as separate tables.
+	// PG14+ (WHPG19) lets a column pick its TOAST compression method.
+	// attcompression is '\0' when unset, 'p' for pglz and 'l' for lz4; a column
+	// left at the default keeps '\0' and needs nothing emitted, but an explicit
+	// choice has to be reproduced or an lz4 column silently comes back as pglz.
+	compressionAtt := "'' AS compression,"
+	if connectionPool.Version.AtLeast("19") {
+		compressionAtt = `CASE a.attcompression WHEN 'p' THEN 'pglz' WHEN 'l' THEN 'lz4' ELSE '' END AS compression,`
+	}
+
 	// Cannot use unnest() in CASE statements anymore in GPDB 7+ so convert
 	// it to a LEFT JOIN LATERAL. We do not use LEFT JOIN LATERAL for GPDB 6
 	// because the CASE unnest() logic is more performant.
@@ -336,7 +371,8 @@ func GetColumnDefinitions(connectionPool *dbconn.DBConn) map[uint32][]ColumnDefi
 		a.atthasdef,
 		pg_catalog.format_type(t.oid,a.atttypmod) AS type,
 		coalesce(pg_catalog.array_to_string(e.attoptions, ','), '') AS encoding,
-		a.attstattarget,
+		coalesce(a.attstattarget, -1) AS attstattarget,
+		%s
 		CASE WHEN a.attstorage != t.typstorage THEN a.attstorage ELSE '' END AS storagetype,
 		coalesce('('||pg_catalog.pg_get_expr(ad.adbin, ad.adrelid)||')', '') AS defaultval,
 		coalesce(d.description, '') AS comment,
@@ -368,7 +404,7 @@ func GetColumnDefinitions(connectionPool *dbconn.DBConn) map[uint32][]ColumnDefi
 		AND c.reltype <> 0
 		AND a.attnum > 0::pg_catalog.int2
 		AND a.attisdropped = 'f'
-	ORDER BY a.attrelid, a.attnum`, relationAndSchemaFilterClause())
+	ORDER BY a.attrelid, a.attnum`, compressionAtt, relationAndSchemaFilterClause())
 
 	query := ``
 	if connectionPool.Version.Before("6") {

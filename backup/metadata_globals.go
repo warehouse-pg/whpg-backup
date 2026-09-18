@@ -35,6 +35,37 @@ func PrintCreateDatabaseStatement(metadataFile *utils.FileWithByteCount, tocfile
 	if db.Encoding != "" && (db.Encoding != defaultDB.Encoding) {
 		metadataFile.MustPrintf(" ENCODING '%s'", db.Encoding)
 	}
+	// PG15+ (WHPG19): reproduce a non-default locale provider along with the
+	// locale it reads, which for icu and builtin is datlocale rather than
+	// datcollate/datctype.  Emitted whenever either differs from the default
+	// database, since a matching provider can still carry a different locale.
+	if db.LocProvider != "" && (db.LocProvider != defaultDB.LocProvider ||
+		db.Locale != defaultDB.Locale || db.IcuRules != defaultDB.IcuRules) {
+		switch db.LocProvider {
+		case "c":
+			// libc keeps its locale in datcollate/datctype, which the
+			// LC_COLLATE/LC_CTYPE clauses below carry; datlocale is asserted
+			// NULL for this provider, so there is nothing else to reproduce.
+			metadataFile.MustPrintf(" LOCALE_PROVIDER libc")
+		case "i":
+			metadataFile.MustPrintf(" LOCALE_PROVIDER icu")
+			if db.Locale != "" {
+				metadataFile.MustPrintf(" ICU_LOCALE '%s'", utils.EscapeSingleQuotes(db.Locale))
+			}
+			if db.IcuRules != "" {
+				// ICU tailoring uses the apostrophe as its own quoting
+				// character, so these genuinely do contain single quotes.
+				metadataFile.MustPrintf(" ICU_RULES '%s'", utils.EscapeSingleQuotes(db.IcuRules))
+			}
+		case "b":
+			metadataFile.MustPrintf(" LOCALE_PROVIDER builtin")
+			if db.Locale != "" {
+				metadataFile.MustPrintf(" BUILTIN_LOCALE '%s'", utils.EscapeSingleQuotes(db.Locale))
+			}
+		default:
+			gplog.Warn("Database %s has unrecognized locale provider '%s'; it will be restored with the default provider.", db.Name, db.LocProvider)
+		}
+	}
 	if db.Collate != "" && (db.Collate != defaultDB.Collate) {
 		metadataFile.MustPrintf(" LC_COLLATE '%s'", db.Collate)
 	}
@@ -398,8 +429,23 @@ func PrintRoleMembershipStatements(metadataFile *utils.FileWithByteCount, objToc
 	for _, roleMember := range roleMembers {
 		start := metadataFile.ByteCount
 		metadataFile.MustPrintf("\nGRANT %s TO %s", roleMember.Role, roleMember.Member)
+		// Built as a list because PG16+ (WHPG19) can carry INHERIT and SET
+		// alongside ADMIN OPTION under a single WITH. On older majors only the
+		// admin option is ever populated, so this still reads as it always did.
+		// Mirrors the option buffer in pg_dumpall's dumpRoleMembership():
+		// INHERIT is always spelled out, SET only when it is false.
+		options := make([]string, 0)
 		if roleMember.IsAdmin {
-			metadataFile.MustPrintf(" WITH ADMIN OPTION")
+			options = append(options, "ADMIN OPTION")
+		}
+		if roleMember.InheritOption != "" {
+			options = append(options, fmt.Sprintf("INHERIT %s", roleMember.InheritOption))
+		}
+		if roleMember.SetOption == "FALSE" {
+			options = append(options, "SET FALSE")
+		}
+		if len(options) > 0 {
+			metadataFile.MustPrintf(" WITH %s", strings.Join(options, ", "))
 		}
 		if roleMember.Grantor != "" {
 			metadataFile.MustPrintf(" GRANTED BY %s", roleMember.Grantor)

@@ -410,6 +410,12 @@ var _ = Describe("backup integration create statement tests", func() {
 		BeforeEach(func() {
 			testhelper.AssertQueryRuns(connectionPool, `CREATE ROLE usergroup`)
 			testhelper.AssertQueryRuns(connectionPool, `CREATE ROLE testuser`)
+			if connectionPool.Version.AtLeast("19") {
+				// PG16+: replaying GRANT ... GRANTED BY testrole requires
+				// testrole to actually hold ADMIN OPTION on the role (as it
+				// would after restoring its own admin membership first).
+				testhelper.AssertQueryRuns(connectionPool, `GRANT usergroup TO testrole WITH ADMIN OPTION`)
+			}
 		})
 		AfterEach(func() {
 			defer testhelper.AssertQueryRuns(connectionPool, `DROP ROLE usergroup`)
@@ -425,7 +431,7 @@ var _ = Describe("backup integration create statement tests", func() {
 			resultRoleMembers := backup.GetRoleMembers(connectionPool)
 			Expect(resultRoleMembers).To(HaveLen(numRoleMembers + 1))
 			for _, roleMember := range resultRoleMembers {
-				if roleMember.Role == "usergroup" {
+				if roleMember.Role == "usergroup" && roleMember.Member == "testuser" {
 					structmatcher.ExpectStructsToMatch(&expectedRoleMember, &roleMember)
 					return
 				}
@@ -442,7 +448,7 @@ var _ = Describe("backup integration create statement tests", func() {
 			resultRoleMembers := backup.GetRoleMembers(connectionPool)
 			Expect(resultRoleMembers).To(HaveLen(numRoleMembers + 1))
 			for _, roleMember := range resultRoleMembers {
-				if roleMember.Role == "usergroup" {
+				if roleMember.Role == "usergroup" && roleMember.Member == "testuser" {
 					structmatcher.ExpectStructsToMatch(&expectedRoleMember, &roleMember)
 					return
 				}

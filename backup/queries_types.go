@@ -42,6 +42,7 @@ type BaseType struct {
 	Storage         string
 	DefaultVal      string
 	Element         string
+	Subscript       string
 	Category        string
 	Preferred       bool
 	Delimiter       string
@@ -96,6 +97,14 @@ func GetBaseTypes(connectionPool *dbconn.DBConn) []BaseType {
 		AND ut.oid IS NULL
 		AND %s`, SchemaFilterClause("n"), ExtensionFilterClause("t"))
 
+	// PG14+ (WHPG19) types may declare a subscript function; without backing it
+	// up, a type's ELEMENT cannot be restored (PG14+ rejects ELEMENT without
+	// SUBSCRIPT). The column does not exist before PG14, so only select it there.
+	subscriptCol := ""
+	if connectionPool.Version.AtLeast("19") {
+		subscriptCol = `CASE WHEN t.typsubscript = '-'::regproc THEN '' ELSE t.typsubscript::regproc::text END AS subscript,`
+	}
+
 	atLeast6Query := fmt.Sprintf(`
 	SELECT t.oid,
 		quote_ident(n.nspname) AS schema,
@@ -112,6 +121,7 @@ func GetBaseTypes(connectionPool *dbconn.DBConn) []BaseType {
 		t.typstorage AS storage,
 		coalesce(t.typdefault, '') AS defaultval,
 		CASE WHEN t.typelem != 0::regproc THEN pg_catalog.format_type(t.typelem, NULL) ELSE '' END AS element,
+		%s
 		t.typcategory AS category,
 		t.typispreferred AS preferred,
 		t.typdelim AS delimiter,
@@ -128,7 +138,7 @@ func GetBaseTypes(connectionPool *dbconn.DBConn) []BaseType {
 	WHERE %s
 		AND t.typtype = 'b'
 		AND ut.oid IS NULL
-		AND %s`, SchemaFilterClause("n"), ExtensionFilterClause("t"))
+		AND %s`, subscriptCol, SchemaFilterClause("n"), ExtensionFilterClause("t"))
 
 	results := make([]BaseType, 0)
 	var err error
@@ -387,6 +397,7 @@ type RangeType struct {
 	SubTypeOpClass string
 	Canonical      string
 	SubTypeDiff    string
+	MultiRangeName string // WHPG19+
 }
 
 func (t RangeType) GetMetadataEntry() (string, toc.MetadataEntry) {
@@ -403,8 +414,30 @@ func (t RangeType) FQN() string {
 
 func GetRangeTypes(connectionPool *dbconn.DBConn) []RangeType {
 	gplog.Verbose("Retrieving range types")
+	// PG14+ (WHPG19) gives every range type a companion multirange type, whose
+	// name CREATE TYPE ... AS RANGE can set with MULTIRANGE_TYPE_NAME. Without
+	// it a custom name restores as the generated default, and anything that
+	// referred to the custom name -- a column, a function signature -- fails.
+	// Spell the name out unconditionally, as pg_dump's dumpRangeType() does,
+	// rather than reimplementing makeMultirangeTypeName()'s truncation rules to
+	// decide whether it is the default.
+	//
+	// Built from pg_type/pg_namespace rather than format_type(): that only
+	// schema-qualifies a type the current search_path cannot see, so it would
+	// depend on SetSessionGUCs() having set search_path to pg_catalog -- true
+	// today, but nothing here says so. DefineRange() resolves an unqualified
+	// MULTIRANGE_TYPE_NAME against the *restore* session's search_path rather
+	// than the range type's schema, so a bare name is not merely untidy.
+	multiRangeNameAtt := ""
+	multiRangeNameJoin := ""
+	if connectionPool.Version.AtLeast("19") {
+		multiRangeNameAtt = "quote_ident(mn.nspname) || '.' || quote_ident(mt.typname) AS multirangename,"
+		multiRangeNameJoin = `JOIN pg_type mt ON mt.oid = r.rngmultitypid
+		JOIN pg_namespace mn ON mn.oid = mt.typnamespace`
+	}
 	query := fmt.Sprintf(`
 	SELECT t.oid,
+		%s
 		quote_ident(n.nspname) AS schema,
 		quote_ident(t.typname) AS name,
 		format_type(st.oid, st.typtypmod) AS subtype,
@@ -428,13 +461,14 @@ func GetRangeTypes(connectionPool *dbconn.DBConn) []RangeType {
 		JOIN pg_type t ON t.oid = r.rngtypid
 		JOIN pg_namespace n ON t.typnamespace = n.oid
 		JOIN pg_type st ON st.oid = r.rngsubtype
+		%s
 		LEFT JOIN pg_collation c ON c.oid = r.rngcollation
 		LEFT JOIN pg_namespace nc ON nc.oid = c.collnamespace
 		LEFT JOIN pg_opclass opc ON opc.oid = r.rngsubopc
 		LEFT JOIN pg_namespace nopc ON nopc.oid = opc.opcnamespace
 	WHERE %s
 		AND t.typtype = 'r'
-		AND %s`, SchemaFilterClause("n"), ExtensionFilterClause("t"))
+		AND %s`, multiRangeNameAtt, multiRangeNameJoin, SchemaFilterClause("n"), ExtensionFilterClause("t"))
 
 	results := make([]RangeType, 0)
 	err := connectionPool.Select(&results, query)
@@ -487,6 +521,8 @@ type Collation struct {
 	Ctype           string
 	Provider        string
 	IsDeterministic string
+	Locale          string // WHPG19+
+	IcuRules        string // WHPG19+
 }
 
 func (c Collation) GetMetadataEntry() (string, toc.MetadataEntry) {
@@ -533,9 +569,29 @@ func GetCollations(connectionPool *dbconn.DBConn) []Collation {
         	JOIN pg_namespace n ON c.collnamespace = n.oid
         WHERE %s`, SchemaFilterClause("n"))
 
+	// PG17+ (WHPG19) keeps a non-libc collation's locale in colllocale and
+	// leaves collcollate/collctype NULL, so the query above would fail outright
+	// on an ICU or builtin collation rather than merely lose the locale.  ICU
+	// collations may also carry custom tailoring in collicurules.
+	atLeast19Query := fmt.Sprintf(`
+        SELECT c.oid,
+        	quote_ident(n.nspname) AS schema,
+        	quote_ident(c.collname) AS name,
+        	coalesce(c.collcollate, '') AS collate,
+        	coalesce(c.collctype, '') AS ctype,
+        	coalesce(c.colllocale, '') AS locale,
+        	coalesce(c.collicurules, '') AS icurules,
+        	c.collprovider as provider,
+        	c.collisdeterministic as IsDeterministic
+        FROM pg_collation c
+        	JOIN pg_namespace n ON c.collnamespace = n.oid
+        WHERE %s`, SchemaFilterClause("n"))
+
 	query := ""
 	if connectionPool.Version.Before("7") {
 		query = before7Query
+	} else if connectionPool.Version.AtLeast("19") {
+		query = atLeast19Query
 	} else {
 		query = atLeast7Query
 	}

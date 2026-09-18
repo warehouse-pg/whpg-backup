@@ -24,10 +24,12 @@ var _ = Describe("backup/predata_acl tests", func() {
 		hasAllPrivileges := testutils.DefaultACLForType("anothertestrole", toc.OBJ_TABLE)
 		hasMostPrivileges := testutils.DefaultACLForType("testrole", toc.OBJ_TABLE)
 		hasMostPrivileges.Trigger = false
+		hasMostPrivileges.Maintain = false
 		hasSinglePrivilege := backup.ACL{Grantee: "", Trigger: true}
 		hasAllPrivilegesWithGrant := testutils.DefaultACLForTypeWithGrant("anothertestrole", toc.OBJ_TABLE)
 		hasMostPrivilegesWithGrant := testutils.DefaultACLForTypeWithGrant("testrole", toc.OBJ_TABLE)
 		hasMostPrivilegesWithGrant.TriggerWithGrant = false
+		hasMostPrivilegesWithGrant.MaintainWithGrant = false
 		hasSinglePrivilegeWithGrant := backup.ACL{Grantee: "", TriggerWithGrant: true}
 		privileges := []backup.ACL{hasAllPrivileges, hasMostPrivileges, hasSinglePrivilege}
 		privilegesWithGrant := []backup.ACL{hasAllPrivilegesWithGrant, hasMostPrivilegesWithGrant, hasSinglePrivilegeWithGrant}
@@ -430,9 +432,22 @@ ALTER DEFAULT PRIVILEGES FOR ROLE testrole GRANT USAGE ON TABLES TO somerole WIT
 			result := backup.ParseACL(aclStr)
 			structmatcher.ExpectStructsToMatch(&expected, result)
 		})
+		It("parses the PG17 MAINTAIN privilege", func() {
+			result := backup.ParseACL("testrole=m/gpadmin")
+			Expect(result.Maintain).To(BeTrue())
+			Expect(result.MaintainWithGrant).To(BeFalse())
+		})
+		It("parses MAINTAIN with grant option", func() {
+			result := backup.ParseACL("testrole=m*/gpadmin")
+			Expect(result.Maintain).To(BeFalse())
+			Expect(result.MaintainWithGrant).To(BeTrue())
+		})
 		It("parses an ACL string containing a role with multiple privileges", func() {
 			aclStr := "testrole=arwdDxt/gpadmin"
 			expected := testutils.DefaultACLForType("testrole", toc.OBJ_TABLE)
+			// The string above grants the seven privileges a relation had
+			// before PG17, so it never carries MAINTAIN whatever the version.
+			expected.Maintain = false
 			result := backup.ParseACL(aclStr)
 			structmatcher.ExpectStructsToMatch(&expected, result)
 		})

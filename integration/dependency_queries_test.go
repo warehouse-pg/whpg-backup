@@ -31,6 +31,7 @@ var _ = Describe("backup integration tests", func() {
 			Expect(deps[barEntry]).To(HaveKey(fooEntry))
 		})
 		It("constructs dependencies correctly for a table dependent on a protocol", func() {
+			testutils.SkipIfNoS3Protocol(connectionPool)
 			testhelper.AssertQueryRuns(connectionPool, `CREATE FUNCTION public.read_from_s3() RETURNS integer
 		AS '$libdir/gps3ext.so', 's3_import'
 		LANGUAGE c STABLE NO SQL;`)

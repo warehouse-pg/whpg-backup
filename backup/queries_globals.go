@@ -39,12 +39,15 @@ func GetSessionGUCs(connectionPool *dbconn.DBConn) SessionGUCs {
 }
 
 type Database struct {
-	Oid        uint32
-	Name       string
-	Tablespace string
-	Collate    string
-	CType      string
-	Encoding   string
+	Oid         uint32
+	Name        string
+	Tablespace  string
+	Collate     string
+	CType       string
+	Encoding    string
+	LocProvider string // WHPG19+
+	Locale      string // WHPG19+
+	IcuRules    string // WHPG19+
 }
 
 func (db Database) GetMetadataEntry() (string, toc.MetadataEntry) {
@@ -72,6 +75,14 @@ func GetDefaultDatabaseEncodingInfo(connectionPool *dbconn.DBConn) Database {
 	if connectionPool.Version.AtLeast("6") {
 		lcQuery = "datcollate AS collate, datctype AS ctype,"
 	}
+	// template0's own provider and locale, so that PrintCreateDatabaseStatement
+	// only spells them out for a database that actually diverges from it.
+	if connectionPool.Version.AtLeast("19") {
+		lcQuery += `
+		datlocprovider AS locprovider,
+		coalesce(datlocale, '') AS locale,
+		coalesce(daticurules, '') AS icurules,`
+	}
 
 	query := fmt.Sprintf(`
 	SELECT datname AS name,
@@ -90,6 +101,17 @@ func GetDatabaseInfo(connectionPool *dbconn.DBConn) Database {
 	lcQuery := ""
 	if connectionPool.Version.AtLeast("6") {
 		lcQuery = "datcollate AS collate, datctype AS ctype,"
+	}
+	// PG15+ (WHPG19) lets a database pick a locale provider other than libc,
+	// in which case the locale that actually governs it lives in datlocale
+	// (plus daticurules for ICU tailoring) rather than in datcollate/datctype.
+	// Those two stay populated regardless, so without the provider the database
+	// silently comes back as libc with a different collation.
+	if connectionPool.Version.AtLeast("19") {
+		lcQuery += `
+		datlocprovider AS locprovider,
+		coalesce(datlocale, '') AS locale,
+		coalesce(daticurules, '') AS icurules,`
 	}
 	query := fmt.Sprintf(`
 	SELECT d.oid,
@@ -505,6 +527,12 @@ type RoleMember struct {
 	Member  string
 	Grantor string
 	IsAdmin bool
+	// WHPG19+. Empty on older majors, where the grant carries no such option.
+	InheritOption string
+	SetOption     string
+	// WHPG19+. Whether the grantor is the bootstrap superuser, the only role
+	// whose grants can be replayed before its own membership on the role.
+	GrantorIsBootstrapSuper bool
 }
 
 func (rm RoleMember) GetMetadataEntry() (string, toc.MetadataEntry) {
@@ -528,21 +556,97 @@ func GetRoleMembers(connectionPool *dbconn.DBConn) []RoleMember {
 		whereClause = ``
 	}
 
+	// PG16+ (WHPG19) records two more per-grant options alongside admin_option.
+	// Without them a GRANT ... WITH INHERIT FALSE / SET FALSE comes back with
+	// the defaults, quietly widening what the member can do.
+	grantOptionAtts := ""
+	if connectionPool.Version.AtLeast("19") {
+		grantOptionAtts = `CASE WHEN pga.inherit_option THEN 'TRUE' ELSE 'FALSE' END AS inheritoption,
+		CASE WHEN pga.set_option THEN 'TRUE' ELSE 'FALSE' END AS setoption,
+		(pga.grantor = 10::oid) AS grantorisbootstrapsuper,`
+	}
+
 	query := fmt.Sprintf(`
 	SELECT quote_ident(pg_get_userbyid(pga.roleid)) AS role,
 		quote_ident(pg_get_userbyid(pga.member)) AS member,
 		CASE WHEN pg_get_userbyid(pga.grantor) like 'unknown (OID='||pga.grantor::regclass||')'
 		THEN '' ELSE quote_ident(pg_get_userbyid(pga.grantor))
 		END AS grantor,
+		%s
 		admin_option AS isadmin
 	FROM pg_auth_members pga
 	% s
-	ORDER BY roleid, member`, whereClause)
+	ORDER BY roleid, member`, grantOptionAtts, whereClause)
 
 	results := make([]RoleMember, 0)
 	err := connectionPool.Select(&results, query)
 	gplog.FatalOnError(err)
+	if connectionPool.Version.AtLeast("19") {
+		return OrderRoleMembersForRestore(results)
+	}
 	return results
+}
+
+// OrderRoleMembersForRestore puts role grants into an order the restore can
+// actually replay.
+//
+// PG16+ requires the role named by GRANTED BY to hold ADMIN OPTION on the role
+// being granted at the moment the grant is replayed, so such a grant must
+// follow that grantor's own ADMIN OPTION grant. The catalog order the query
+// asks for -- roleid, member -- says nothing about that: the two rows share a
+// roleid, so it falls to the members' OIDs, and a member that happens to
+// predate its grantor restores first and fails.
+//
+// Only the bootstrap superuser is exempt, and being a superuser is not enough:
+// check_role_grantor() skips the check for BOOTSTRAP_SUPERUSERID alone, and the
+// select_best_admin() it defers to otherwise is documented as ignoring
+// super-userness. pg_dumpall compares the recorded grantor against
+// BOOTSTRAP_SUPERUSERID for the same reason.
+//
+// Same shape as pg_dumpall's dumpRoleMembership(): repeatedly emit whatever has
+// become replayable, and if a pass makes no progress emit the remainder in
+// catalog order rather than dropping grants on the floor.
+func OrderRoleMembersForRestore(roleMembers []RoleMember) []RoleMember {
+	// A grant is only constrained relative to other grants of the same role.
+	membersByRole := make(map[string][]RoleMember)
+	roleOrder := make([]string, 0)
+	for _, member := range roleMembers {
+		if _, seen := membersByRole[member.Role]; !seen {
+			roleOrder = append(roleOrder, member.Role)
+		}
+		membersByRole[member.Role] = append(membersByRole[member.Role], member)
+	}
+
+	ordered := make([]RoleMember, 0, len(roleMembers))
+	for _, role := range roleOrder {
+		remaining := membersByRole[role]
+		// Roles known to hold ADMIN OPTION on this role by the time we get here.
+		canGrant := make(map[string]bool)
+		for len(remaining) > 0 {
+			deferred := make([]RoleMember, 0, len(remaining))
+			progressed := false
+			for _, member := range remaining {
+				if member.Grantor == "" || member.GrantorIsBootstrapSuper || canGrant[member.Grantor] {
+					ordered = append(ordered, member)
+					if member.IsAdmin {
+						canGrant[member.Member] = true
+					}
+					progressed = true
+				} else {
+					deferred = append(deferred, member)
+				}
+			}
+			if !progressed {
+				// Nothing left can be justified from this role's own
+				// membership -- a grantor that is not a member of it, say.
+				// Emit as-is and let the restore report it.
+				ordered = append(ordered, deferred...)
+				break
+			}
+			remaining = deferred
+		}
+	}
+	return ordered
 }
 
 type Tablespace struct {

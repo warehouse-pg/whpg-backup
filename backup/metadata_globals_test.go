@@ -9,6 +9,7 @@ import (
 	"github.com/warehouse-pg/common-go-libs/testhelper"
 
 	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
 var _ = Describe("backup/metadata_globals tests", func() {
@@ -62,6 +63,43 @@ GRANT TEMPORARY,CONNECT ON DATABASE testdb TO testrole;`,
 			emptyMetadataMap := backup.MetadataMap{}
 			backup.PrintCreateDatabaseStatement(backupfile, tocfile, emptyDB, db, emptyMetadataMap)
 			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `CREATE DATABASE testdb TEMPLATE template0 TABLESPACE test_tablespace ENCODING 'UTF8' LC_COLLATE 'en_US.utf-8' LC_CTYPE 'en_US.utf-8';`)
+		})
+		It("prints the locale provider and locale for an ICU database", func() {
+			db := backup.Database{Oid: 1, Name: "testdb", Tablespace: "pg_default",
+				LocProvider: "i", Locale: "en-US", IcuRules: "&a < g"}
+			emptyMetadataMap := backup.MetadataMap{}
+			backup.PrintCreateDatabaseStatement(backupfile, tocfile, emptyDB, db, emptyMetadataMap)
+			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `CREATE DATABASE testdb TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'en-US' ICU_RULES '&a < g';`)
+		})
+		It("prints the locale provider and locale for a builtin database", func() {
+			db := backup.Database{Oid: 1, Name: "testdb", Tablespace: "pg_default",
+				LocProvider: "b", Locale: "C.UTF-8"}
+			emptyMetadataMap := backup.MetadataMap{}
+			backup.PrintCreateDatabaseStatement(backupfile, tocfile, emptyDB, db, emptyMetadataMap)
+			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `CREATE DATABASE testdb TEMPLATE template0 LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8';`)
+		})
+		It("does not print the locale provider if it matches the default database", func() {
+			defaultDB := backup.Database{LocProvider: "c"}
+			db := backup.Database{Oid: 1, Name: "testdb", Tablespace: "pg_default", LocProvider: "c"}
+			emptyMetadataMap := backup.MetadataMap{}
+			backup.PrintCreateDatabaseStatement(backupfile, tocfile, defaultDB, db, emptyMetadataMap)
+			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `CREATE DATABASE testdb TEMPLATE template0;`)
+		})
+		It("prints the ICU rules when only they differ from the default database", func() {
+			defaultDB := backup.Database{LocProvider: "i", Locale: "en-US"}
+			db := backup.Database{Oid: 1, Name: "testdb", Tablespace: "pg_default",
+				LocProvider: "i", Locale: "en-US", IcuRules: "&a < g"}
+			emptyMetadataMap := backup.MetadataMap{}
+			backup.PrintCreateDatabaseStatement(backupfile, tocfile, defaultDB, db, emptyMetadataMap)
+			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `CREATE DATABASE testdb TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'en-US' ICU_RULES '&a < g';`)
+		})
+		It("escapes single quotes in the ICU rules", func() {
+			// ICU tailoring uses the apostrophe as its own quoting character.
+			db := backup.Database{Oid: 1, Name: "testdb", Tablespace: "pg_default",
+				LocProvider: "i", Locale: "en-US", IcuRules: "&a < 'x'"}
+			emptyMetadataMap := backup.MetadataMap{}
+			backup.PrintCreateDatabaseStatement(backupfile, tocfile, emptyDB, db, emptyMetadataMap)
+			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `CREATE DATABASE testdb TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE 'en-US' ICU_RULES '&a < ''x''';`)
 		})
 		It("does not print encoding information if it is the same as defaults", func() {
 			defaultDB := backup.Database{Oid: 0, Name: "", Tablespace: "", Encoding: "UTF8", Collate: "en_US.utf-8", CType: "en_US.utf-8"}
@@ -371,6 +409,63 @@ ALTER ROLE "testRole2" WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICAT
 			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, expectedStatements...)
 		})
 	})
+	Describe("OrderRoleMembersForRestore", func() {
+		// PG16+ requires the role named by GRANTED BY to already hold ADMIN
+		// OPTION on the role being granted, so a grant attributed to a
+		// non-superuser grantor has to follow that grantor's own admin grant.
+		It("moves a grant behind the admin grant its grantor depends on", func() {
+			members := []backup.RoleMember{
+				{Role: "usergroup", Member: "testuser", Grantor: "testrole", IsAdmin: false},
+				{Role: "usergroup", Member: "testrole", Grantor: "gpadmin", IsAdmin: true, GrantorIsBootstrapSuper: true},
+			}
+			ordered := backup.OrderRoleMembersForRestore(members)
+			Expect(ordered).To(HaveLen(2))
+			Expect(ordered[0].Member).To(Equal("testrole"))
+			Expect(ordered[1].Member).To(Equal("testuser"))
+		})
+		It("still defers a grant whose grantor is a superuser but not the bootstrap one", func() {
+			// check_role_grantor() exempts BOOTSTRAP_SUPERUSERID alone, and the
+			// select_best_admin() it otherwise defers to ignores super-userness,
+			// so testrole being SUPERUSER does not let this grant go first.
+			members := []backup.RoleMember{
+				{Role: "usergroup", Member: "testuser", Grantor: "testrole", GrantorIsBootstrapSuper: false},
+				{Role: "usergroup", Member: "testrole", Grantor: "gpadmin", IsAdmin: true, GrantorIsBootstrapSuper: true},
+			}
+			ordered := backup.OrderRoleMembersForRestore(members)
+			Expect(ordered[0].Member).To(Equal("testrole"))
+			Expect(ordered[1].Member).To(Equal("testuser"))
+		})
+		It("leaves an already-replayable order alone", func() {
+			members := []backup.RoleMember{
+				{Role: "usergroup", Member: "alice", Grantor: "gpadmin", GrantorIsBootstrapSuper: true},
+				{Role: "usergroup", Member: "bob", Grantor: "gpadmin", GrantorIsBootstrapSuper: true},
+			}
+			ordered := backup.OrderRoleMembersForRestore(members)
+			Expect(ordered[0].Member).To(Equal("alice"))
+			Expect(ordered[1].Member).To(Equal("bob"))
+		})
+		It("only orders within a role, keeping the roles in catalog order", func() {
+			members := []backup.RoleMember{
+				{Role: "groupone", Member: "alice", Grantor: "gpadmin", GrantorIsBootstrapSuper: true},
+				{Role: "grouptwo", Member: "carol", Grantor: "dave", IsAdmin: false},
+				{Role: "grouptwo", Member: "dave", Grantor: "gpadmin", IsAdmin: true, GrantorIsBootstrapSuper: true},
+			}
+			ordered := backup.OrderRoleMembersForRestore(members)
+			Expect(ordered[0].Role).To(Equal("groupone"))
+			Expect(ordered[1].Member).To(Equal("dave"))
+			Expect(ordered[2].Member).To(Equal("carol"))
+		})
+		It("emits a grant whose grantor never becomes available rather than dropping it", func() {
+			// A grantor that is not a member of the role at all: nothing can
+			// make it replayable, so it still has to reach the metadata file.
+			members := []backup.RoleMember{
+				{Role: "usergroup", Member: "testuser", Grantor: "someowner", IsAdmin: false},
+			}
+			ordered := backup.OrderRoleMembersForRestore(members)
+			Expect(ordered).To(HaveLen(1))
+			Expect(ordered[0].Member).To(Equal("testuser"))
+		})
+	})
 	Describe("PrintRoleMembershipStatements", func() {
 		roleWith := backup.RoleMember{Role: "group", Member: "rolewith", Grantor: "grantor", IsAdmin: true}
 		roleWithout := backup.RoleMember{Role: "group", Member: "rolewithout", Grantor: "grantor", IsAdmin: false}
@@ -383,6 +478,18 @@ ALTER ROLE "testRole2" WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICAT
 		It("prints a role WITH ADMIN OPTION", func() {
 			backup.PrintRoleMembershipStatements(backupfile, tocfile, []backup.RoleMember{roleWith})
 			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `GRANT group TO rolewith WITH ADMIN OPTION GRANTED BY grantor;`)
+		})
+		It("prints the PG16+ grant options alongside ADMIN OPTION", func() {
+			member := backup.RoleMember{Role: "group", Member: "rolewith", Grantor: "grantor",
+				IsAdmin: true, InheritOption: "FALSE", SetOption: "FALSE"}
+			backup.PrintRoleMembershipStatements(backupfile, tocfile, []backup.RoleMember{member})
+			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `GRANT group TO rolewith WITH ADMIN OPTION, INHERIT FALSE, SET FALSE GRANTED BY grantor;`)
+		})
+		It("omits SET when it is true but still spells out INHERIT", func() {
+			member := backup.RoleMember{Role: "group", Member: "rolewith", Grantor: "",
+				IsAdmin: false, InheritOption: "TRUE", SetOption: "TRUE"}
+			backup.PrintRoleMembershipStatements(backupfile, tocfile, []backup.RoleMember{member})
+			testutils.AssertBufferContents(tocfile.GlobalEntries, buffer, `GRANT group TO rolewith WITH INHERIT TRUE;`)
 		})
 		It("prints multiple roles", func() {
 			backup.PrintRoleMembershipStatements(backupfile, tocfile, []backup.RoleMember{roleWith, roleWithout})
