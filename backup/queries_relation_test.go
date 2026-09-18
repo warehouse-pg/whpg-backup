@@ -61,4 +61,102 @@ var _ = Describe("backup internal tests", func() {
 			structmatcher.ExpectStructsToMatch(&expectedResult[0], &result[0])
 		})
 	})
+	Describe("GetRelationsChangedSinceSnapshot", func() {
+		tables := []backup.Relation{
+			{SchemaOid: 2200, Oid: 101, Schema: "public", Name: "unchanged"},
+			{SchemaOid: 2200, Oid: 102, Schema: "public", Name: "rewritten"},
+			{SchemaOid: 2200, Oid: 103, Schema: "public", Name: "dropped"},
+			{SchemaOid: 2200, Oid: 104, Schema: "public", Name: "parted"},
+		}
+		header := []string{"oid", "parentoid", "schema", "name", "snapshotrelfilenode", "currentrelfilenode"}
+		// The partition root has no storage of its own; its data lives in leaf 201.
+		unchangedRows := func() *sqlmock.Rows {
+			return sqlmock.NewRows(header).
+				AddRow(101, nil, "public", "unchanged", 1001, 1001).
+				AddRow(102, nil, "public", "rewritten", 1002, 1002).
+				AddRow(103, nil, "public", "dropped", 1003, 1003).
+				AddRow(104, nil, "public", "parted", 0, nil).
+				AddRow(201, 104, "public", "parted_1_prt_1", 2001, 2001)
+		}
+
+		It("returns nothing without querying when there are no tables", func() {
+			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, []backup.Relation{})
+			Expect(changed).To(BeEmpty())
+			Expect(mock.ExpectationsWereMet()).To(Succeed())
+		})
+		It("returns nothing when every relation still has the relfilenode the snapshot saw", func() {
+			mock.ExpectQuery(`WITH RECURSIVE (.*)`).WillReturnRows(unchangedRows())
+
+			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, tables)
+			Expect(changed).To(BeEmpty())
+		})
+		It("reports a table whose live relfilenode differs from the snapshot as rewritten", func() {
+			rows := sqlmock.NewRows(header).
+				AddRow(101, nil, "public", "unchanged", 1001, 1001).
+				AddRow(102, nil, "public", "rewritten", 1002, 2002).
+				AddRow(103, nil, "public", "dropped", 1003, 1003)
+			mock.ExpectQuery(`WITH RECURSIVE (.*)`).WillReturnRows(rows)
+
+			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, tables)
+			Expect(changed).To(HaveLen(1))
+			Expect(changed[0].Relation).To(Equal(tables[1]))
+			Expect(changed[0].Dropped).To(BeFalse())
+			Expect(changed[0].Ancestors).To(BeEmpty())
+		})
+		It("reports a table with no live relfilenode as dropped", func() {
+			rows := sqlmock.NewRows(header).
+				AddRow(101, nil, "public", "unchanged", 1001, 1001).
+				AddRow(102, nil, "public", "rewritten", 1002, 1002).
+				AddRow(103, nil, "public", "dropped", 1003, nil)
+			mock.ExpectQuery(`WITH RECURSIVE (.*)`).WillReturnRows(rows)
+
+			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, tables)
+			Expect(changed).To(HaveLen(1))
+			Expect(changed[0].Relation).To(Equal(tables[2]))
+			Expect(changed[0].Dropped).To(BeTrue())
+		})
+		It("reports a changed partition below a locked table with the table as its ancestor", func() {
+			rows := sqlmock.NewRows(header).
+				AddRow(104, nil, "public", "parted", 0, nil).
+				AddRow(201, 104, "public", "parted_1_prt_1", 2001, 2002)
+			mock.ExpectQuery(`WITH RECURSIVE (.*)`).WillReturnRows(rows)
+
+			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, tables)
+			Expect(changed).To(HaveLen(1))
+			Expect(changed[0].FQN()).To(Equal("public.parted_1_prt_1"))
+			Expect(changed[0].Dropped).To(BeFalse())
+			Expect(changed[0].Ancestors).To(Equal([]backup.Relation{tables[3]}))
+			Expect(changed[0].Describe()).To(Equal("public.parted_1_prt_1 (rewritten or truncated, partition of public.parted)"))
+		})
+		It("does not compare relations without storage", func() {
+			rows := sqlmock.NewRows(header).
+				AddRow(104, nil, "public", "parted", 0, nil)
+			mock.ExpectQuery(`WITH RECURSIVE (.*)`).WillReturnRows(rows)
+
+			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, tables)
+			Expect(changed).To(BeEmpty())
+		})
+		It("describes a changed table with its reason", func() {
+			rewritten := backup.ChangedRelation{Relation: tables[1], Dropped: false}
+			dropped := backup.ChangedRelation{Relation: tables[2], Dropped: true}
+			Expect(rewritten.Reason()).To(Equal("rewritten or truncated"))
+			Expect(rewritten.Describe()).To(Equal("public.rewritten (rewritten or truncated)"))
+			Expect(dropped.Reason()).To(Equal("dropped and recreated"))
+			Expect(dropped.Describe()).To(Equal("public.dropped (dropped and recreated)"))
+		})
+		It("lists locked tables in input order, each followed by its changed partitions", func() {
+			rows := sqlmock.NewRows(header).
+				AddRow(201, 104, "public", "parted_1_prt_1", 2001, 2002).
+				AddRow(104, nil, "public", "parted", 0, nil).
+				AddRow(103, nil, "public", "dropped", 1003, nil).
+				AddRow(102, nil, "public", "rewritten", 1002, 2002)
+			mock.ExpectQuery(`WITH RECURSIVE (.*)`).WillReturnRows(rows)
+
+			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, tables)
+			Expect(changed).To(HaveLen(3))
+			Expect(changed[0].Name).To(Equal("rewritten"))
+			Expect(changed[1].Name).To(Equal("dropped"))
+			Expect(changed[2].Name).To(Equal("parted_1_prt_1"))
+		})
+	})
 })

@@ -7,6 +7,7 @@ package backup
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -378,6 +379,38 @@ func printDataBackupWarnings(numExtTables int64) {
 		gplog.Info("Skipped data backup of %d external/foreign table(s).", numExtTables)
 		gplog.Info("See %s for a complete list of skipped tables.", gplog.GetLogFilePath())
 	}
+}
+
+func printSkippedDataTableWarnings() {
+	if len(skippedDataTables) > 0 {
+		gplog.Warn("Data of %d table(s) not backed up because they changed on disk after the backup snapshot was taken.", len(skippedDataTables))
+		gplog.Warn("See the backup report or %s for the list of tables.", gplog.GetLogFilePath())
+	}
+}
+
+// tablesWithBackedUpData leaves out the relations whose data changed after the
+// snapshot or was left out because of that: statistics describe data, and a
+// restore creates these tables empty.
+func tablesWithBackedUpData(tables []Table) []Table {
+	if len(changedRelations) == 0 {
+		return tables
+	}
+	kept := make([]Table, 0, len(tables))
+	for _, table := range tables {
+		if !changedRelations[table.FQN()] {
+			kept = append(kept, table)
+		}
+	}
+	return kept
+}
+
+func sortedSkippedDataTables() []string {
+	tables := make([]string, 0, len(skippedDataTables))
+	for fqn := range skippedDataTables {
+		tables = append(tables, fqn)
+	}
+	sort.Strings(tables)
+	return tables
 }
 
 // Remove external/foreign tables from the data backup set
