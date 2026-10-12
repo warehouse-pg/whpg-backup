@@ -19,10 +19,10 @@ import (
 /*
  * gpbackup exports its snapshot before it locks the tables. A table whose
  * storage is replaced in that window (ALTER TABLE ... SET WITH (REORGANIZE=true),
- * SET DISTRIBUTED BY, TRUNCATE, VACUUM FULL of a heap table, or DROP + CREATE
- * under the same name) can no longer be read consistently under that snapshot: its old files
- * are gone, so COPY sees no rows, and for AO tables the pg_aoseg helper named
- * under the snapshot no longer exists. A table whose name was swapped onto
+ * SET DISTRIBUTED BY, TRUNCATE, or DROP + CREATE under the same name) can no
+ * longer be read consistently under that snapshot: its old files are gone, so
+ * COPY sees no rows, and for AO tables the pg_aoseg helper named under the
+ * snapshot no longer exists. A table whose name was swapped onto
  * another table is locked and copied as that other table.
  *
  * These tests drive that window deterministically: a second session holds the

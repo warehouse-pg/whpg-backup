@@ -182,7 +182,10 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 			Expect(fqns(changed)).To(ConsistOf(heapTable))
 			Expect(changed[0].Change).To(Equal(backup.RelationRewritten))
 		})
-		It("reports a heap table rewritten by VACUUM FULL", func() {
+		It("reports a heap table rewritten by VACUUM FULL, which it cannot tell from other rewrites", func() {
+			// VACUUM FULL keeps the rows visible to the snapshot, but its new
+			// relfilenode looks like any other rewrite's; reporting it costs a
+			// new snapshot and never reads a table that lost its rows.
 			beginBackupTransaction()
 			testhelper.AssertQueryRuns(ddlConn, fmt.Sprintf("VACUUM FULL %s", heapTable))
 			relations := lockedRelations()

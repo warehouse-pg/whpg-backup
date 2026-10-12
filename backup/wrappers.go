@@ -250,18 +250,18 @@ func RetrieveAndProcessTables() ([]Table, []Table) {
  * lockBackupSet resolves the tables in the backup set and takes ACCESS SHARE
  * locks on them. The catalog is read under the backup snapshot, but LOCK TABLE
  * resolves names against the live catalog, so a table rewritten (ALTER TABLE
- * ... SET WITH (REORGANIZE=true), SET DISTRIBUTED BY, VACUUM FULL of a heap
- * table), truncated, or dropped and recreated between the two can no longer
- * be read consistently under the snapshot: its old storage is gone. A table
- * whose name was swapped onto another table in between is locked and copied
- * as that other table, and a table dropped, or moved out of its schema, in
- * between cannot be locked at all. Nothing can change once the locks are
- * held, so the set, partitions included, is verified after locking. If a
- * lock found a table gone or anything changed, the snapshot and the
- * resolution are redone, up to maxSnapshotAttempts times. Relations still
- * changing after the last attempt are recorded so that their data, and the
- * data of the locked tables above them, is left out of the backup with a
- * warning; whatever metadata the backup carries for them is unaffected.
+ * ... SET WITH (REORGANIZE=true), SET DISTRIBUTED BY), truncated, or dropped
+ * and recreated between the two can no longer be read consistently under the
+ * snapshot: its old storage is gone. A table whose name was swapped onto
+ * another table in between is locked and copied as that other table, and a
+ * table dropped, or moved out of its schema, in between cannot be locked at
+ * all. Nothing can change once the locks are held, so the set, partitions
+ * included, is verified after locking. If a lock found a table gone or
+ * anything changed, the snapshot and the resolution are redone, up to
+ * maxSnapshotAttempts times. Relations still changing after the last
+ * attempt are recorded so that their data, and the data of the locked tables
+ * above them, is left out of the backup with a warning; whatever metadata the
+ * backup carries for them is unaffected.
  */
 func lockBackupSet() ([]Relation, []Relation, map[uint32]string) {
 	changedRelations = make(map[string]bool)

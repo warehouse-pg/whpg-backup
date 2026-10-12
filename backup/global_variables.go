@@ -60,9 +60,10 @@ var (
 	// How many snapshots lockBackupSet may try before it gives up on tables
 	// that keep changing under it and skips their data.
 	maxSnapshotAttempts = defaultSnapshotAttempts
-	// The relations still changing on disk after the last snapshot attempt
-	// and the locked tables above them, by FQN. Their data cannot be read
-	// under the snapshot, and a changed relation's pg_aoseg name is stale.
+	// The relations that still did not match the snapshot after the last
+	// attempt, and the locked tables above them, by FQN. Their data cannot be
+	// read under the snapshot, and a changed relation's pg_aoseg name may be
+	// stale.
 	changedRelations map[string]bool
 	// FQNs of the tables left out of the data backup set because of that.
 	skippedDataTables map[string]bool

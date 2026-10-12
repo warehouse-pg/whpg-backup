@@ -576,11 +576,13 @@ func (c ChangedRelation) Describe() string {
  * The catalog rows come from the backup snapshot, while pg_relation_filenode()
  * looks the relation up in the live catalog, the same way LOCK TABLE and the
  * later COPY do. A table rewritten by ALTER TABLE ... SET WITH (REORGANIZE=true)
- * or SET DISTRIBUTED BY, a heap table rewritten by VACUUM FULL, or a truncated
- * table has a new relfilenode; a table dropped (and possibly recreated under
- * the same name) has none. Either way the snapshot can no longer see the
- * table's data: the old files are gone, and for append-optimized tables the
- * pg_aoseg relation named under the snapshot no longer exists.
+ * or SET DISTRIBUTED BY, or a truncated table, has a new relfilenode; a table
+ * dropped (and possibly recreated under the same name) has none. Either way
+ * the snapshot can no longer see the table's data: the old files are gone,
+ * and for append-optimized tables the pg_aoseg relation named under the
+ * snapshot no longer exists. VACUUM FULL and CLUSTER of a heap table also
+ * give it a new relfilenode, although they keep its rows visible to the
+ * snapshot; the check cannot tell them apart and reports them as well.
  *
  * LOCK TABLE and COPY also name the locked tables, so each name must still
  * resolve, in the live catalog, to the relation the snapshot knows by it. A
