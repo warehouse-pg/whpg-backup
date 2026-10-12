@@ -27,6 +27,8 @@ const (
 	Deferred
 	Complete
 	PG_LOCK_NOT_AVAILABLE = "55P03"
+	PG_UNDEFINED_TABLE    = "42P01"
+	PG_INVALID_SCHEMA     = "3F000"
 	ENUM_TYPE_OID         = 3500
 )
 

@@ -8,6 +8,7 @@ import (
 	"github.com/greenplum-db/gpbackup/backup"
 	"github.com/greenplum-db/gpbackup/options"
 	"github.com/greenplum-db/gpbackup/testutils"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/spf13/cobra"
 	"github.com/warehouse-pg/common-go-libs/dbconn"
 	"github.com/warehouse-pg/common-go-libs/gplog"
@@ -78,7 +79,7 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 	lockedRelations := func() []backup.Relation {
 		included := backup.GetIncludedUserTableRelations(connectionPool, backup.IncludedRelationFqns)
 		relations := backup.ConvertRelationsOptionsToBackup(included)
-		backup.LockTables(connectionPool, relations)
+		Expect(backup.LockTables(connectionPool, relations)).To(Succeed())
 		return relations
 	}
 
@@ -207,7 +208,7 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 
 			// The child changed, but only as a table of its own: it is reported
 			// when it is locked itself, and never for the parent.
-			backup.LockTables(connectionPool, []backup.Relation{parent})
+			Expect(backup.LockTables(connectionPool, []backup.Relation{parent})).To(Succeed())
 			Expect(backup.GetRelationsChangedSinceSnapshot(connectionPool, []backup.Relation{parent})).To(BeEmpty())
 			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, []backup.Relation{parent, child})
 			Expect(fqns(changed)).To(ConsistOf(inhChild))
@@ -242,6 +243,21 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 
 			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, relations)
 			Expect(fqns(changed)).To(ConsistOf(aoTable, heapTable))
+		})
+	})
+
+	Describe("LockTables", func() {
+		It("returns the error when a table named under the snapshot no longer exists", func() {
+			beginBackupTransaction()
+			included := backup.GetIncludedUserTableRelations(connectionPool, backup.IncludedRelationFqns)
+			relations := backup.ConvertRelationsOptionsToBackup(included)
+			testhelper.AssertQueryRuns(ddlConn, fmt.Sprintf("DROP TABLE %s", stableTable))
+
+			err := backup.LockTables(connectionPool, relations)
+			Expect(err).To(HaveOccurred())
+			pgErr, ok := err.(*pgconn.PgError)
+			Expect(ok).To(BeTrue())
+			Expect(pgErr.Code).To(Equal(backup.PG_UNDEFINED_TABLE))
 		})
 	})
 
@@ -339,6 +355,16 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 				fmt.Sprintf("%s (its name now refers to another table)", heapTable)))
 			Expect(dbconn.MustSelectString(connectionPool,
 				fmt.Sprintf("SELECT count(*)::text AS string FROM %s", heapTable))).To(Equal("5"))
+		})
+		It("stops as at the start when an included table was dropped in the window", func() {
+			// LOCK TABLE cannot find the table, so the backup takes a new
+			// snapshot; there the name the user gave does not resolve, which is
+			// fatal exactly as it is when the backup starts.
+			beginBackupTransaction()
+			testhelper.AssertQueryRuns(ddlConn, fmt.Sprintf("DROP TABLE %s", stableTable))
+
+			defer testhelper.ShouldPanicWithMessage(fmt.Sprintf("Table %s does not exist", stableTable))
+			backup.RetrieveAndProcessTables()
 		})
 		It("expands the include list again when a partitioned table is dropped and recreated with more partitions in the window", func() {
 			// The include list was expanded to the partitions when the backup

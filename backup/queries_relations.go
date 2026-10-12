@@ -479,8 +479,10 @@ func GetAllViews(connectionPool *dbconn.DBConn) []View {
 // locks for the target relations. This is mainly to protect the metadata
 // dumping part but it also makes the main worker thread (worker 0) the
 // most resilient for the later data dumping logic. Locks will still be
-// taken for --data-only calls.
-func LockTables(connectionPool *dbconn.DBConn, tables []Relation) {
+// taken for --data-only calls. A LOCK TABLE that fails is returned, leaving
+// the transaction aborted, so the caller can tell a table that no longer
+// exists from other errors.
+func LockTables(connectionPool *dbconn.DBConn, tables []Relation) error {
 	gplog.Info("Acquiring ACCESS SHARE locks on tables")
 
 	progressBar := utils.NewProgressBar(len(tables), "Locks acquired: ", utils.PB_VERBOSE)
@@ -506,9 +508,9 @@ func LockTables(connectionPool *dbconn.DBConn, tables []Relation) {
 			if wasTerminated {
 				gplog.Warn("Interrupt received while acquiring ACCESS SHARE locks on tables")
 				select {} // wait for cleanup thread to exit gpbackup
-			} else {
-				gplog.FatalOnError(err)
 			}
+			progressBar.Finish()
+			return err
 		}
 		if i == len(tableBatches)-1 && lastBatchSize > 0 {
 			currentBatchSize = lastBatchSize
@@ -517,6 +519,7 @@ func LockTables(connectionPool *dbconn.DBConn, tables []Relation) {
 	}
 
 	progressBar.Finish()
+	return nil
 }
 
 // RelationChange says how a relation changed after the backup snapshot.

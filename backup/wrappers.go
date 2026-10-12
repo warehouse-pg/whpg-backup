@@ -12,6 +12,7 @@ import (
 	"github.com/greenplum-db/gpbackup/report"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/nightlyone/lockfile"
 	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
@@ -253,9 +254,10 @@ func RetrieveAndProcessTables() ([]Table, []Table) {
  * table), truncated, or dropped and recreated between the two can no longer
  * be read consistently under the snapshot: its old storage is gone. A table
  * whose name was swapped onto another table in between is locked and copied
- * as that other table. Nothing
- * can change once the locks are held, so the set, partitions included, is
- * verified after locking. If anything changed, the snapshot and the
+ * as that other table, and a table dropped, or moved out of its schema, in
+ * between cannot be locked at all. Nothing can change once the locks are
+ * held, so the set, partitions included, is verified after locking. If a
+ * lock found a table gone or anything changed, the snapshot and the
  * resolution are redone, up to maxSnapshotAttempts times. Relations still
  * changing after the last attempt are recorded so that their data, and the
  * data of the locked tables above them, is left out of the backup with a
@@ -272,7 +274,16 @@ func lockBackupSet() ([]Relation, []Relation, map[uint32]string) {
 		// include them in the single ConstructDefinitionsForTables call.
 		configDumpRelations, configDumpFilterConds := GetExtensionConfigDumpRelations(connectionPool)
 		tableRelations = append(tableRelations, configDumpRelations...)
-		LockTables(connectionPool, tableRelations)
+		err := LockTables(connectionPool, tableRelations)
+		if err != nil {
+			if attempt >= maxSnapshotAttempts || !isMissingRelationError(err) {
+				gplog.FatalOnError(err)
+			}
+			gplog.Warn("Could not lock the tables in the backup set: %s; taking a new snapshot (attempt %d of %d)",
+				err, attempt+1, maxSnapshotAttempts)
+			restartBackupTransactions()
+			continue
+		}
 
 		// A metadata-only backup reads nothing but the catalog, which the
 		// snapshot keeps consistent whatever happens to the tables' storage.
@@ -308,6 +319,13 @@ func lockBackupSet() ([]Relation, []Relation, map[uint32]string) {
 			strings.Join(descriptions, ", "), attempt+1, maxSnapshotAttempts)
 		restartBackupTransactions()
 	}
+}
+
+// isMissingRelationError reports whether a LOCK TABLE failed because a table,
+// or its schema, no longer exists under the name the snapshot gave.
+func isMissingRelationError(err error) bool {
+	pgErr, ok := err.(*pgconn.PgError)
+	return ok && (pgErr.Code == PG_UNDEFINED_TABLE || pgErr.Code == PG_INVALID_SCHEMA)
 }
 
 /*

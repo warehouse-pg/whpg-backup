@@ -1,10 +1,12 @@
 package backup
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/greenplum-db/gpbackup/filepath"
 	"github.com/greenplum-db/gpbackup/options"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/spf13/pflag"
 	"github.com/warehouse-pg/common-go-libs/testhelper"
 
@@ -67,6 +69,16 @@ var _ = Describe("backup internal tests", func() {
 			_ = cmdFlags.Set(options.NO_HISTORY, "true")
 
 			DoCleanup(true)
+		})
+	})
+	Describe("isMissingRelationError", func() {
+		It("is true for a table or schema that no longer exists", func() {
+			Expect(isMissingRelationError(&pgconn.PgError{Code: PG_UNDEFINED_TABLE})).To(BeTrue())
+			Expect(isMissingRelationError(&pgconn.PgError{Code: PG_INVALID_SCHEMA})).To(BeTrue())
+		})
+		It("is false for any other error", func() {
+			Expect(isMissingRelationError(&pgconn.PgError{Code: PG_LOCK_NOT_AVAILABLE})).To(BeFalse())
+			Expect(isMissingRelationError(errors.New("connection reset"))).To(BeFalse())
 		})
 	})
 })

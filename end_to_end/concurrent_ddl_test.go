@@ -292,6 +292,39 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		assertDataRestored(restoreConn, map[string]int{"schema2.ao1": 7})
 	})
 
+	It("retries when a table is dropped in the window", func() {
+		// LOCK TABLE by name cannot find a table the snapshot still lists.
+		// The new snapshot no longer lists it, and the backup completes.
+		testhelper.AssertQueryRuns(backupConn, `CREATE TABLE schema2.dropping (i int) DISTRIBUTED BY (i);
+			INSERT INTO schema2.dropping SELECT generate_series(1, 10)`)
+		defer testhelper.AssertQueryRuns(backupConn, "DROP TABLE IF EXISTS schema2.dropping")
+		rewriter := holdRewrite("DROP TABLE schema2.dropping")
+		done, output, err := startBackup("--leaf-partition-data")
+		defer waitForBackupExit(done)
+		defer releaseRewrite(rewriter)
+
+		waitForBackupLockWait(backupConn)
+		rewriter.MustCommit()
+		waitForBackupExit(done)
+
+		Expect(*err).ToNot(HaveOccurred(), *output)
+		Expect(*output).To(ContainSubstring("Backup completed successfully"))
+		Expect(*output).ToNot(ContainSubstring("[CRITICAL]"))
+		Expect(*output).To(ContainSubstring("Could not lock the tables in the backup set"))
+		Expect(*output).To(ContainSubstring(newSnapshotWarning))
+		Expect(*output).ToNot(ContainSubstring(dataSkippedWarning))
+
+		timestamp := getBackupTimestamp(*output)
+		tocStruct := readTOC(timestamp)
+		Expect(hasTableDDL(tocStruct, "schema2", "dropping")).To(BeFalse())
+		Expect(findDataEntry(tocStruct, "schema2", "dropping")).To(BeNil())
+		Expect(findDataEntry(tocStruct, "schema2", "ao1").RowsCopied).To(Equal(int64(1000)))
+
+		gprestore(gprestorePath, restoreHelperPath, timestamp,
+			"--redirect-db", "restoredb", "--backup-dir", backupDir)
+		assertDataRestored(restoreConn, map[string]int{"schema2.ao1": 1000})
+	})
+
 	It("retries when another table is renamed onto a table's name in the window", func() {
 		// A rename swap keeps the old table, storage and all, under a new name.
 		// LOCK TABLE and COPY by name land on the new table; without the name
