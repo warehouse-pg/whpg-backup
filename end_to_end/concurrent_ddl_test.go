@@ -22,7 +22,8 @@ import (
  * SET DISTRIBUTED BY, TRUNCATE, VACUUM FULL of a heap table, or DROP + CREATE
  * under the same name) can no longer be read consistently under that snapshot: its old files
  * are gone, so COPY sees no rows, and for AO tables the pg_aoseg helper named
- * under the snapshot no longer exists.
+ * under the snapshot no longer exists. A table whose name was swapped onto
+ * another table is locked and copied as that other table.
  *
  * These tests drive that window deterministically: a second session holds the
  * rewrite open, gpbackup blocks in LockTables behind it, the session commits,
@@ -289,6 +290,48 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		gprestore(gprestorePath, restoreHelperPath, timestamp,
 			"--redirect-db", "restoredb", "--backup-dir", backupDir)
 		assertDataRestored(restoreConn, map[string]int{"schema2.ao1": 7})
+	})
+
+	It("retries when another table is renamed onto a table's name in the window", func() {
+		// A rename swap keeps the old table, storage and all, under a new name.
+		// LOCK TABLE and COPY by name land on the new table; without the name
+		// check the backup would copy it under the old table's metadata.
+		testhelper.AssertQueryRuns(backupConn, `CREATE TABLE schema2.swapped (i int) DISTRIBUTED BY (i);
+			INSERT INTO schema2.swapped SELECT generate_series(1, 10);
+			CREATE TABLE schema2.swapped_new (i int, j int) DISTRIBUTED BY (i);
+			INSERT INTO schema2.swapped_new SELECT g, g FROM generate_series(1, 3) g`)
+		defer testhelper.AssertQueryRuns(backupConn,
+			"DROP TABLE IF EXISTS schema2.swapped, schema2.swapped_new, schema2.swapped_old")
+		rewriter := holdRewrite(`ALTER TABLE schema2.swapped RENAME TO swapped_old;
+			ALTER TABLE schema2.swapped_new RENAME TO swapped`)
+		done, output, err := startBackup("--include-table", "schema2.swapped")
+		defer waitForBackupExit(done)
+		defer releaseRewrite(rewriter)
+
+		waitForBackupLockWait(backupConn)
+		rewriter.MustCommit()
+		waitForBackupExit(done)
+
+		Expect(*err).ToNot(HaveOccurred(), *output)
+		Expect(*output).To(ContainSubstring("Backup completed successfully"))
+		Expect(*output).ToNot(ContainSubstring("[CRITICAL]"))
+		Expect(*output).To(ContainSubstring("schema2.swapped (its name now refers to another table)"))
+		Expect(*output).To(ContainSubstring(newSnapshotWarning))
+		Expect(*output).ToNot(ContainSubstring(dataSkippedWarning))
+
+		// The new snapshot resolves the included name to the new table, so
+		// the backup carries its DDL with its data: column j included.
+		timestamp := getBackupTimestamp(*output)
+		tocStruct := readTOC(timestamp)
+		Expect(findDataEntry(tocStruct, "schema2", "swapped").RowsCopied).To(Equal(int64(3)))
+
+		// A filtered backup carries no CREATE SCHEMA.
+		testhelper.AssertQueryRuns(restoreConn, "CREATE SCHEMA schema2")
+		gprestore(gprestorePath, restoreHelperPath, timestamp,
+			"--redirect-db", "restoredb", "--backup-dir", backupDir)
+		assertDataRestored(restoreConn, map[string]int{"schema2.swapped": 3})
+		Expect(dbconn.MustSelectString(restoreConn,
+			"SELECT count(j)::text AS string FROM schema2.swapped")).To(Equal("3"))
 	})
 
 	It("expands an included partitioned table again when it is dropped and recreated with more partitions in the window", func() {

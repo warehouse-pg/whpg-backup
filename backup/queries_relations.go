@@ -519,23 +519,41 @@ func LockTables(connectionPool *dbconn.DBConn, tables []Relation) {
 	progressBar.Finish()
 }
 
-// ChangedRelation is a relation whose storage no longer matches what the
-// backup snapshot describes: it was rewritten, truncated, or dropped (and
-// possibly recreated under the same name) after the snapshot was taken. It is
-// either one of the locked tables or a partition below one of them; Ancestors
-// lists the inheritance chain up to the locked table, nearest first.
+// RelationChange says how a relation changed after the backup snapshot.
+type RelationChange int
+
+const (
+	// The relation has a new relfilenode: it was rewritten or truncated.
+	RelationRewritten RelationChange = iota
+	// The relation has no relfilenode: it was dropped, and possibly recreated
+	// under the same name.
+	RelationDropped
+	// The relation is intact, but its name now refers to another relation,
+	// e.g. after a rename swap; LOCK TABLE and COPY act on that one.
+	RelationReplaced
+)
+
+// ChangedRelation is a relation that no longer matches what the backup
+// snapshot describes, so its data cannot be read consistently under that
+// snapshot; Change says how. It is either one of the locked tables or a
+// partition below one of them; Ancestors lists the chain of parents up to the
+// locked table, nearest first.
 type ChangedRelation struct {
 	Relation
-	Dropped   bool
+	Change    RelationChange
 	Ancestors []Relation
 }
 
 // Reason says what happened to the relation, for warnings.
 func (c ChangedRelation) Reason() string {
-	if c.Dropped {
+	switch c.Change {
+	case RelationDropped:
 		return "dropped and recreated"
+	case RelationReplaced:
+		return "its name now refers to another table"
+	default:
+		return "rewritten or truncated"
 	}
-	return "rewritten or truncated"
 }
 
 // Describe names the relation, its Reason, and the table it is a partition of.
@@ -561,6 +579,12 @@ func (c ChangedRelation) Describe() string {
  * table's data: the old files are gone, and for append-optimized tables the
  * pg_aoseg relation named under the snapshot no longer exists.
  *
+ * LOCK TABLE and COPY also name the locked tables, so each name must still
+ * resolve, in the live catalog, to the relation the snapshot knows by it. A
+ * rename swap (ALTER TABLE t RENAME TO t_old; ALTER TABLE t_new RENAME TO t)
+ * leaves the old relation and its storage intact, but the backup would lock
+ * and copy t_new under t's metadata.
+ *
  * Partitions are followed through pg_inherits because a backup that does not
  * use --leaf-partition-data locks and copies the parent only, while the data
  * lives in the children; LOCK TABLE on the parent locks them too, so the
@@ -581,14 +605,18 @@ func GetRelationsChangedSinceSnapshot(connectionPool *dbconn.DBConn, tables []Re
 		Name                string
 		SnapshotRelfilenode uint32
 		CurrentRelfilenode  sql.NullInt64
+		CurrentNameOid      sql.NullInt64
 	}
 	oids := make([]string, 0, len(tables))
 	for _, table := range tables {
 		oids = append(oids, strconv.FormatUint(uint64(table.Oid), 10))
 	}
 	partitionFilter := `i.inhrelid IN (SELECT parchildrelid FROM pg_partition_rule)`
+	// to_regclass takes a cstring before 7.x and a text from 7.x on.
+	currentNameOid := `pg_catalog.to_regclass((quote_ident(n.nspname) || '.' || quote_ident(c.relname))::cstring)::oid`
 	if connectionPool.Version.AtLeast("7") {
 		partitionFilter = `i.inhrelid IN (SELECT oid FROM pg_class WHERE relispartition)`
+		currentNameOid = `pg_catalog.to_regclass(quote_ident(n.nspname) || '.' || quote_ident(c.relname))::oid`
 	}
 	query := fmt.Sprintf(`
 	WITH RECURSIVE inheritance(oid, parentoid) AS (
@@ -606,10 +634,11 @@ func GetRelationsChangedSinceSnapshot(connectionPool *dbconn.DBConn, tables []Re
 		quote_ident(n.nspname) AS schema,
 		quote_ident(c.relname) AS name,
 		c.relfilenode AS snapshotrelfilenode,
-		pg_catalog.pg_relation_filenode(c.oid) AS currentrelfilenode
+		pg_catalog.pg_relation_filenode(c.oid) AS currentrelfilenode,
+		CASE WHEN h.parentoid IS NULL THEN %s END AS currentnameoid
 	FROM inheritance h
 		JOIN pg_class c ON c.oid = h.oid
-		JOIN pg_namespace n ON n.oid = c.relnamespace`, strings.Join(oids, ", "), partitionFilter)
+		JOIN pg_namespace n ON n.oid = c.relnamespace`, strings.Join(oids, ", "), partitionFilter, currentNameOid)
 	rows := make([]relationStorage, 0)
 	err := connectionPool.Select(&rows, query)
 	gplog.FatalOnError(err)
@@ -620,7 +649,7 @@ func GetRelationsChangedSinceSnapshot(connectionPool *dbconn.DBConn, tables []Re
 	}
 	relations := make(map[uint32]Relation)
 	parents := make(map[uint32]uint32)
-	dropped := make(map[uint32]bool)
+	changes := make(map[uint32]RelationChange)
 	for _, row := range rows {
 		if _, isLocked := locked[row.Oid]; isLocked {
 			relations[row.Oid] = tables[locked[row.Oid]]
@@ -632,13 +661,20 @@ func GetRelationsChangedSinceSnapshot(connectionPool *dbconn.DBConn, tables []Re
 		if row.ParentOid.Valid {
 			parents[row.Oid] = uint32(row.ParentOid.Int64)
 		}
-		if row.SnapshotRelfilenode == 0 {
+		if _, seen := changes[row.Oid]; seen {
 			continue
 		}
-		if !row.CurrentRelfilenode.Valid {
-			dropped[row.Oid] = true
-		} else if uint32(row.CurrentRelfilenode.Int64) != row.SnapshotRelfilenode {
-			dropped[row.Oid] = false
+		storageChanged := row.SnapshotRelfilenode != 0 &&
+			(!row.CurrentRelfilenode.Valid || uint32(row.CurrentRelfilenode.Int64) != row.SnapshotRelfilenode)
+		switch {
+		case storageChanged && !row.CurrentRelfilenode.Valid:
+			changes[row.Oid] = RelationDropped
+		case storageChanged:
+			changes[row.Oid] = RelationRewritten
+		case !row.ParentOid.Valid && (!row.CurrentNameOid.Valid || uint32(row.CurrentNameOid.Int64) != row.Oid):
+			// Only the locked tables are looked up by name, so only their
+			// rows, the ones without a parent, carry the name lookup.
+			changes[row.Oid] = RelationReplaced
 		}
 	}
 
@@ -658,8 +694,8 @@ func GetRelationsChangedSinceSnapshot(connectionPool *dbconn.DBConn, tables []Re
 	}
 
 	changed := make([]ChangedRelation, 0)
-	for oid, isDropped := range dropped {
-		changed = append(changed, ChangedRelation{Relation: relations[oid], Dropped: isDropped, Ancestors: ancestorsOf(oid)})
+	for oid, change := range changes {
+		changed = append(changed, ChangedRelation{Relation: relations[oid], Change: change, Ancestors: ancestorsOf(oid)})
 	}
 	sort.Slice(changed, func(i, j int) bool {
 		ri, rj := rootIndex(changed[i].Oid), rootIndex(changed[j].Oid)

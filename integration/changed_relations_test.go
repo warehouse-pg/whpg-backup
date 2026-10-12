@@ -32,6 +32,8 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		partLeaf    = "public.part_changed_1_prt_2"
 		inhParent   = "public.inh_parent"
 		inhChild    = "public.inh_child"
+		heapOld     = "public.heap_changed_old"
+		heapNew     = "public.heap_changed_new"
 	)
 	var ddlConn *dbconn.DBConn
 
@@ -58,6 +60,15 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 			truncate = fmt.Sprintf("ALTER TABLE %s TRUNCATE PARTITION FOR (RANK(2))", partTable)
 		}
 		return fmt.Sprintf("%s; INSERT INTO %s SELECT g, 2 FROM generate_series(1, 10) g", truncate, partTable)
+	}
+
+	// renameSwapSQL puts a new 5-row table in place of the heap table under its
+	// name and keeps the old one, storage untouched, as heap_changed_old.
+	renameSwapSQL := func() string {
+		return fmt.Sprintf(`CREATE TABLE public.heap_changed_new (i int) DISTRIBUTED BY (i);
+			INSERT INTO public.heap_changed_new SELECT generate_series(1, 5);
+			ALTER TABLE %s RENAME TO heap_changed_old;
+			ALTER TABLE public.heap_changed_new RENAME TO heap_changed`, heapTable)
 	}
 
 	searchPath := func() string {
@@ -130,8 +141,8 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		testhelper.AssertQueryRuns(connectionPool, "SET search_path TO pg_catalog")
 		ddlConn.Close()
 		testhelper.AssertQueryRuns(connectionPool, fmt.Sprintf(
-			"DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s CASCADE",
-			aoTable, heapTable, stableTable, partTable, inhParent))
+			"DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s CASCADE; DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s",
+			aoTable, heapTable, stableTable, partTable, inhParent, heapOld, heapNew))
 	})
 
 	Describe("GetRelationsChangedSinceSnapshot", func() {
@@ -149,7 +160,7 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 
 			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, relations)
 			Expect(fqns(changed)).To(ConsistOf(aoTable))
-			Expect(changed[0].Dropped).To(BeFalse())
+			Expect(changed[0].Change).To(Equal(backup.RelationRewritten))
 		})
 		It("reports a truncated heap table", func() {
 			beginBackupTransaction()
@@ -158,7 +169,7 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 
 			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, relations)
 			Expect(fqns(changed)).To(ConsistOf(heapTable))
-			Expect(changed[0].Dropped).To(BeFalse())
+			Expect(changed[0].Change).To(Equal(backup.RelationRewritten))
 		})
 		It("reports a heap table rewritten by VACUUM FULL", func() {
 			beginBackupTransaction()
@@ -167,7 +178,7 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 
 			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, relations)
 			Expect(fqns(changed)).To(ConsistOf(heapTable))
-			Expect(changed[0].Dropped).To(BeFalse())
+			Expect(changed[0].Change).To(Equal(backup.RelationRewritten))
 		})
 		It("reports a truncated partition below a locked table with the table as its ancestor", func() {
 			// Without --leaf-partition-data the backup locks and copies the
@@ -178,7 +189,7 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 
 			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, relations)
 			Expect(fqns(changed)).To(ConsistOf(partLeaf))
-			Expect(changed[0].Dropped).To(BeFalse())
+			Expect(changed[0].Change).To(Equal(backup.RelationRewritten))
 			Expect(changed[0].Ancestors).ToNot(BeEmpty())
 			Expect(changed[0].Ancestors[len(changed[0].Ancestors)-1].FQN()).To(Equal(partTable))
 		})
@@ -210,7 +221,18 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 
 			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, relations)
 			Expect(fqns(changed)).To(ConsistOf(aoTable))
-			Expect(changed[0].Dropped).To(BeTrue())
+			Expect(changed[0].Change).To(Equal(backup.RelationDropped))
+		})
+		It("reports a table whose name was swapped onto another table as replaced", func() {
+			// The old relation keeps its storage under a new name, so only the
+			// name lookup sees that LOCK TABLE and COPY now act on another table.
+			beginBackupTransaction()
+			testhelper.AssertQueryRuns(ddlConn, renameSwapSQL())
+			relations := lockedRelations()
+
+			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, relations)
+			Expect(fqns(changed)).To(ConsistOf(heapTable))
+			Expect(changed[0].Change).To(Equal(backup.RelationReplaced))
 		})
 		It("reports every changed table when several change at once", func() {
 			beginBackupTransaction()
@@ -292,6 +314,31 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 			Expect(backup.GetAOIncrementalMetadata(connectionPool)).To(HaveKey(aoTable))
 			Expect(dbconn.MustSelectString(connectionPool,
 				fmt.Sprintf("SELECT count(*)::text AS string FROM %s", aoTable))).To(Equal("7"))
+		})
+		It("re-resolves the include list when another table was renamed onto an included name in the window", func() {
+			oldOid := uint32(0)
+			for _, rel := range backup.IncludedRelationFqns {
+				if rel.Schema == "public" && rel.Name == "heap_changed" {
+					oldOid = rel.Oid
+				}
+			}
+			logStart := len(logFile.Contents())
+			beginBackupTransaction()
+			testhelper.AssertQueryRuns(ddlConn, renameSwapSQL())
+
+			_, dataTables := backup.RetrieveAndProcessTables()
+
+			Expect(dataTableFQNs(dataTables)).To(ConsistOf(aoTable, heapTable, stableTable, partTable))
+			Expect(backup.GetSkippedDataTables()).To(BeEmpty())
+			for _, table := range dataTables {
+				if table.FQN() == heapTable {
+					Expect(table.Oid).ToNot(Equal(oldOid))
+				}
+			}
+			Expect(string(logFile.Contents()[logStart:])).To(ContainSubstring(
+				fmt.Sprintf("%s (its name now refers to another table)", heapTable)))
+			Expect(dbconn.MustSelectString(connectionPool,
+				fmt.Sprintf("SELECT count(*)::text AS string FROM %s", heapTable))).To(Equal("5"))
 		})
 		It("expands the include list again when a partitioned table is dropped and recreated with more partitions in the window", func() {
 			// The include list was expanded to the partitions when the backup

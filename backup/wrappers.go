@@ -251,7 +251,9 @@ func RetrieveAndProcessTables() ([]Table, []Table) {
  * resolves names against the live catalog, so a table rewritten (ALTER TABLE
  * ... SET WITH (REORGANIZE=true), SET DISTRIBUTED BY, VACUUM FULL of a heap
  * table), truncated, or dropped and recreated between the two can no longer
- * be read consistently under the snapshot: its old storage is gone. Nothing
+ * be read consistently under the snapshot: its old storage is gone. A table
+ * whose name was swapped onto another table in between is locked and copied
+ * as that other table. Nothing
  * can change once the locks are held, so the set, partitions included, is
  * verified after locking. If anything changed, the snapshot and the
  * resolution are redone, up to maxSnapshotAttempts times. Relations still
