@@ -30,6 +30,8 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		stableTable = "public.ao_stable"
 		partTable   = "public.part_changed"
 		partLeaf    = "public.part_changed_1_prt_2"
+		inhParent   = "public.inh_parent"
+		inhChild    = "public.inh_child"
 	)
 	var ddlConn *dbconn.DBConn
 
@@ -128,8 +130,8 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		testhelper.AssertQueryRuns(connectionPool, "SET search_path TO pg_catalog")
 		ddlConn.Close()
 		testhelper.AssertQueryRuns(connectionPool, fmt.Sprintf(
-			"DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s",
-			aoTable, heapTable, stableTable, partTable))
+			"DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s; DROP TABLE IF EXISTS %s CASCADE",
+			aoTable, heapTable, stableTable, partTable, inhParent))
 	})
 
 	Describe("GetRelationsChangedSinceSnapshot", func() {
@@ -179,6 +181,26 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 			Expect(changed[0].Dropped).To(BeFalse())
 			Expect(changed[0].Ancestors).ToNot(BeEmpty())
 			Expect(changed[0].Ancestors[len(changed[0].Ancestors)-1].FQN()).To(Equal(partTable))
+		})
+		It("does not follow plain inheritance, whose children COPY of the parent never reads", func() {
+			testhelper.AssertQueryRuns(connectionPool, fmt.Sprintf(`
+				CREATE TABLE %s (i int) DISTRIBUTED BY (i);
+				CREATE TABLE %s () INHERITS (%s) DISTRIBUTED BY (i);
+				INSERT INTO %s SELECT generate_series(1, 10)`, inhParent, inhChild, inhParent, inhChild))
+			parent := backup.Relation{Oid: testutils.OidFromObjectName(connectionPool, "public", "inh_parent", backup.TYPE_RELATION),
+				Schema: "public", Name: "inh_parent"}
+			child := backup.Relation{Oid: testutils.OidFromObjectName(connectionPool, "public", "inh_child", backup.TYPE_RELATION),
+				Schema: "public", Name: "inh_child"}
+			beginBackupTransaction()
+			testhelper.AssertQueryRuns(ddlConn, fmt.Sprintf("TRUNCATE %s", inhChild))
+
+			// The child changed, but only as a table of its own: it is reported
+			// when it is locked itself, and never for the parent.
+			backup.LockTables(connectionPool, []backup.Relation{parent})
+			Expect(backup.GetRelationsChangedSinceSnapshot(connectionPool, []backup.Relation{parent})).To(BeEmpty())
+			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, []backup.Relation{parent, child})
+			Expect(fqns(changed)).To(ConsistOf(inhChild))
+			Expect(changed[0].Ancestors).To(BeEmpty())
 		})
 		It("reports a table dropped and recreated under the same name as dropped", func() {
 			beginBackupTransaction()

@@ -128,6 +128,18 @@ var _ = Describe("backup internal tests", func() {
 			Expect(changed[0].Ancestors).To(Equal([]backup.Relation{tables[3]}))
 			Expect(changed[0].Describe()).To(Equal("public.parted_1_prt_1 (rewritten or truncated, partition of public.parted)"))
 		})
+		It("follows partitions only, not plain inheritance", func() {
+			partitionFilter := `pg_partition_rule`
+			if connectionPool.Version.AtLeast("7") {
+				partitionFilter = `relispartition`
+			}
+			mock.ExpectQuery(`WITH RECURSIVE .* JOIN inheritance h ON i.inhparent = h.oid WHERE .*` + partitionFilter).
+				WillReturnRows(unchangedRows())
+
+			changed := backup.GetRelationsChangedSinceSnapshot(connectionPool, tables)
+			Expect(changed).To(BeEmpty())
+			Expect(mock.ExpectationsWereMet()).To(Succeed())
+		})
 		It("does not compare relations without storage", func() {
 			rows := sqlmock.NewRows(header).
 				AddRow(104, nil, "public", "parted", 0, nil)

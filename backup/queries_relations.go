@@ -564,9 +564,11 @@ func (c ChangedRelation) Describe() string {
  * Partitions are followed through pg_inherits because a backup that does not
  * use --leaf-partition-data locks and copies the parent only, while the data
  * lives in the children; LOCK TABLE on the parent locks them too, so the
- * check is race-free for them as well. Relations without storage (relfilenode
- * 0, e.g. partition roots) are not compared. Locked tables come back in input
- * order, each followed by its changed partitions.
+ * check is race-free for them as well. Only partitions are followed: COPY of a
+ * table reads its partitions but never the children of plain inheritance,
+ * which are backed up, and checked, as tables of their own. Relations without
+ * storage (relfilenode 0, e.g. partition roots) are not compared. Locked
+ * tables come back in input order, each followed by its changed partitions.
  */
 func GetRelationsChangedSinceSnapshot(connectionPool *dbconn.DBConn, tables []Relation) []ChangedRelation {
 	if len(tables) == 0 {
@@ -584,6 +586,10 @@ func GetRelationsChangedSinceSnapshot(connectionPool *dbconn.DBConn, tables []Re
 	for _, table := range tables {
 		oids = append(oids, strconv.FormatUint(uint64(table.Oid), 10))
 	}
+	partitionFilter := `i.inhrelid IN (SELECT parchildrelid FROM pg_partition_rule)`
+	if connectionPool.Version.AtLeast("7") {
+		partitionFilter = `i.inhrelid IN (SELECT oid FROM pg_class WHERE relispartition)`
+	}
 	query := fmt.Sprintf(`
 	WITH RECURSIVE inheritance(oid, parentoid) AS (
 		SELECT c.oid, NULL::oid
@@ -593,6 +599,7 @@ func GetRelationsChangedSinceSnapshot(connectionPool *dbconn.DBConn, tables []Re
 		SELECT i.inhrelid, i.inhparent
 		FROM pg_inherits i
 			JOIN inheritance h ON i.inhparent = h.oid
+		WHERE %s
 	)
 	SELECT DISTINCT h.oid,
 		h.parentoid,
@@ -602,7 +609,7 @@ func GetRelationsChangedSinceSnapshot(connectionPool *dbconn.DBConn, tables []Re
 		pg_catalog.pg_relation_filenode(c.oid) AS currentrelfilenode
 	FROM inheritance h
 		JOIN pg_class c ON c.oid = h.oid
-		JOIN pg_namespace n ON n.oid = c.relnamespace`, strings.Join(oids, ", "))
+		JOIN pg_namespace n ON n.oid = c.relnamespace`, strings.Join(oids, ", "), partitionFilter)
 	rows := make([]relationStorage, 0)
 	err := connectionPool.Select(&rows, query)
 	gplog.FatalOnError(err)
