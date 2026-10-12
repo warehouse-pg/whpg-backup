@@ -466,6 +466,69 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		Expect(findDataEntry(tocStruct, "schema2", "ao2").RowsCopied).To(Equal(int64(1000)))
 	})
 
+	Describe("statistics of a partitioned table whose partition keeps changing", func() {
+		// A table of its own, so the statistics ANALYZE leaves behind do not
+		// reach the other tests' backups.
+		BeforeEach(func() {
+			testhelper.AssertQueryRuns(backupConn, `CREATE TABLE schema2.statparted (id int, d int) DISTRIBUTED BY (id)
+				PARTITION BY RANGE (d) (START (1) END (3) EVERY (1));
+				INSERT INTO schema2.statparted SELECT g, (g % 2) + 1 FROM generate_series(1, 20) g;
+				ANALYZE schema2.statparted`)
+		})
+		AfterEach(func() {
+			testhelper.AssertQueryRuns(backupConn, "DROP TABLE IF EXISTS schema2.statparted")
+		})
+		// One attempt, so the first change is final. Truncate and reload the
+		// first partition so its storage changes and its rows stay the same.
+		truncatePartition := func() *dbconn.DBConn {
+			truncate := "TRUNCATE schema2.statparted_1_prt_1"
+			if backupConn.Version.Before("7") {
+				truncate = "ALTER TABLE schema2.statparted TRUNCATE PARTITION FOR (RANK(1))"
+			}
+			return holdRewrite(fmt.Sprintf(`%s; INSERT INTO schema2.statparted SELECT g, 1 FROM generate_series(2, 20, 2) g`, truncate))
+		}
+		statisticsOf := func(output string) string {
+			return string(getMetdataFileContents(backupDir, getBackupTimestamp(output), "statistics.sql"))
+		}
+
+		It("keeps the root's and the other partitions' when partitions are backed up on their own", func() {
+			rewriter := truncatePartition()
+			done, output, err := startBackupEnv([]string{snapshotAttemptsEnvVar + "=1"}, "--leaf-partition-data", "--with-stats")
+			defer waitForBackupExit(done)
+			defer releaseRewrite(rewriter)
+
+			waitForBackupLockWait(backupConn)
+			rewriter.MustCommit()
+			waitForBackupExit(done)
+
+			Expect(*err).ToNot(HaveOccurred(), *output)
+			Expect(*output).To(ContainSubstring("Data for table schema2.statparted_1_prt_1 not backed up"))
+			Expect(*output).ToNot(ContainSubstring("Data for table schema2.statparted not backed up"))
+			statistics := statisticsOf(*output)
+			Expect(statistics).ToNot(ContainSubstring("'schema2.statparted_1_prt_1'::regclass"))
+			Expect(statistics).To(ContainSubstring("'schema2.statparted_1_prt_2'::regclass"))
+			Expect(statistics).To(ContainSubstring("'schema2.statparted'::regclass"))
+		})
+		It("leaves out the root's and every partition's when the root carries the partitions' data", func() {
+			rewriter := truncatePartition()
+			done, output, err := startBackupEnv([]string{snapshotAttemptsEnvVar + "=1"}, "--with-stats")
+			defer waitForBackupExit(done)
+			defer releaseRewrite(rewriter)
+
+			waitForBackupLockWait(backupConn)
+			rewriter.MustCommit()
+			waitForBackupExit(done)
+
+			Expect(*err).ToNot(HaveOccurred(), *output)
+			Expect(*output).To(ContainSubstring("Data for table schema2.statparted not backed up"))
+			statistics := statisticsOf(*output)
+			Expect(statistics).ToNot(ContainSubstring("'schema2.statparted'::regclass"))
+			Expect(statistics).ToNot(ContainSubstring("'schema2.statparted_1_prt_1'::regclass"))
+			Expect(statistics).ToNot(ContainSubstring("'schema2.statparted_1_prt_2'::regclass"))
+			Expect(statistics).To(ContainSubstring("'schema2.ao1'::regclass"))
+		})
+	})
+
 	It("rejects an invalid WHPGBACKUP_SNAPSHOT_ATTEMPTS before the backup starts", func() {
 		for _, value := range []string{"0", "-1", "abc", "2.5"} {
 			output, err := runBackupEnv([]string{snapshotAttemptsEnvVar + "=" + value})

@@ -388,18 +388,22 @@ func printSkippedDataTableWarnings() {
 	}
 }
 
-// tablesWithBackedUpData leaves out the relations whose data changed after the
-// snapshot or was left out because of that: statistics describe data, and a
-// restore creates these tables empty.
+// tablesWithBackedUpData leaves out the tables whose data the backup does not
+// carry: statistics describe data, and a restore creates these tables empty.
+// They are the tables left out of the data backup set, and on 7.x the
+// partitions whose rows such a table, the root of their partition tree,
+// would have carried. A partitioned table whose partitions are backed up
+// each on its own keeps its statistics when one of them is left out.
 func tablesWithBackedUpData(tables []Table) []Table {
-	if len(changedRelations) == 0 {
+	if len(skippedDataTables) == 0 {
 		return tables
 	}
 	kept := make([]Table, 0, len(tables))
 	for _, table := range tables {
-		if !changedRelations[table.FQN()] {
-			kept = append(kept, table)
+		if skippedDataTables[table.FQN()] || skippedDataTables[table.AttachPartitionInfo.Parent] {
+			continue
 		}
+		kept = append(kept, table)
 	}
 	return kept
 }
