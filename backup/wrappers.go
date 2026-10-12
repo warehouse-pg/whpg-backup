@@ -342,12 +342,11 @@ func restartBackupTransactions() {
 		if connectionPool.Tx[connNum] == nil {
 			continue
 		}
-		// The old transaction is discarded either way; a rollback error only
-		// means its connection is already gone, and Begin reconnects.
-		err := connectionPool.Rollback(connNum)
-		if err != nil {
-			gplog.Warn("Connection %d: %s", connNum, err)
-		}
+		// A rollback fails only when the connection is gone. Begin would
+		// silently open a new one, without the application_name that
+		// cancelBlockedQueries looks for, so stop here as any other query on a
+		// lost connection would.
+		connectionPool.MustRollback(connNum)
 		connectionPool.MustBegin(connNum)
 		if connectionPool.Version.AtLeast(SNAPSHOT_GPDB_MIN_VERSION) {
 			if connNum == 0 {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/greenplum-db/gpbackup/filepath"
 	"github.com/greenplum-db/gpbackup/options"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -105,6 +106,20 @@ var _ = Describe("backup internal tests", func() {
 			// rows, so none of them is restored.
 			skippedDataTables = map[string]bool{"public.parted": true}
 			Expect(tablesWithBackedUpData([]Table{root, leaf1, leaf2, other})).To(Equal([]Table{other}))
+		})
+	})
+	Describe("restartBackupTransactions", func() {
+		It("stops the backup when a connection cannot roll back", func() {
+			savedPool := connectionPool
+			defer func() { connectionPool = savedPool }()
+			var mock sqlmock.Sqlmock
+			connectionPool, mock = testhelper.CreateAndConnectMockDB(1)
+			mock.ExpectBegin()
+			connectionPool.MustBegin(0)
+			mock.ExpectRollback().WillReturnError(errors.New("connection reset by peer"))
+
+			defer testhelper.ShouldPanicWithMessage("connection reset by peer")
+			restartBackupTransactions()
 		})
 	})
 })

@@ -99,7 +99,19 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		return result
 	}
 
+	// rollBackPool ends any transaction left open on the shared pool, by these
+	// tests or by others: a retry restarts every open transaction and stops
+	// on one whose connection is gone.
+	rollBackPool := func() {
+		for connNum := 0; connNum < connectionPool.NumConns; connNum++ {
+			if connectionPool.Tx[connNum] != nil {
+				_ = connectionPool.Rollback(connNum)
+			}
+		}
+	}
+
 	BeforeEach(func() {
+		rollBackPool()
 		gplog.SetVerbosity(gplog.LOGERROR) // turn off the progress bar in LockTables
 		var rootCmd = &cobra.Command{}
 		backup.DoInit(rootCmd) // initializes objectCounts, but also replaces the test logger
@@ -134,9 +146,7 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 		ddlConn = testutils.SetupTestDbConn("testdb")
 	})
 	AfterEach(func() {
-		if connectionPool.Tx[0] != nil {
-			_ = connectionPool.Rollback(0)
-		}
+		rollBackPool()
 		backup.SetBackupSnapshot("")
 		backup.SetMaxSnapshotAttempts(3)
 		testhelper.AssertQueryRuns(connectionPool, "SET search_path TO pg_catalog")
