@@ -506,7 +506,11 @@ var _ = Describe("Tables changed between snapshot and lock", func() {
 			Expect(*output).ToNot(ContainSubstring("Data for table schema2.statparted not backed up"))
 			statistics := statisticsOf(*output)
 			Expect(statistics).ToNot(ContainSubstring("'schema2.statparted_1_prt_1'::regclass"))
-			Expect(statistics).To(ContainSubstring("'schema2.statparted_1_prt_2'::regclass"))
+			// Before 7, partitions are not tables of their own in the metadata,
+			// so a backup never carries their statistics.
+			if backupConn.Version.AtLeast("7") {
+				Expect(statistics).To(ContainSubstring("'schema2.statparted_1_prt_2'::regclass"))
+			}
 			Expect(statistics).To(ContainSubstring("'schema2.statparted'::regclass"))
 		})
 		It("leaves out the root's and every partition's when the root carries the partitions' data", func() {
