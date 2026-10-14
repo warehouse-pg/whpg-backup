@@ -12,8 +12,10 @@ import (
 	"github.com/greenplum-db/gpbackup/report"
 	"github.com/greenplum-db/gpbackup/toc"
 	"github.com/greenplum-db/gpbackup/utils"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/nightlyone/lockfile"
 	"github.com/pkg/errors"
+	"github.com/spf13/pflag"
 	"github.com/warehouse-pg/common-go-libs/cluster"
 	"github.com/warehouse-pg/common-go-libs/dbconn"
 	"github.com/warehouse-pg/common-go-libs/gplog"
@@ -207,14 +209,7 @@ func createBackupDirectoriesOnAllHosts() {
  */
 
 func RetrieveAndProcessTables() ([]Table, []Table) {
-	includedRelations := GetIncludedUserTableRelations(connectionPool, IncludedRelationFqns)
-	tableRelations := ConvertRelationsOptionsToBackup(includedRelations)
-
-	// Query extension config dump tables early so we can lock them and
-	// include them in the single ConstructDefinitionsForTables call.
-	configDumpRelations, configDumpFilterConds := GetExtensionConfigDumpRelations(connectionPool)
-	tableRelations = append(tableRelations, configDumpRelations...)
-	LockTables(connectionPool, tableRelations)
+	tableRelations, configDumpRelations, configDumpFilterConds := lockBackupSet()
 
 	if connectionPool.Version.AtLeast("6") {
 		tableRelations = append(tableRelations, GetForeignTableRelations(connectionPool)...)
@@ -245,9 +240,169 @@ func RetrieveAndProcessTables() ([]Table, []Table) {
 
 	metadataTables, dataTables := SplitTablesByPartitionType(regularTables, IncludedRelationFqns)
 	dataTables = append(dataTables, configDumpTables...)
+	dataTables = removeChangedDataTables(dataTables)
 	objectCounts["Tables"] = len(metadataTables)
 
 	return metadataTables, dataTables
+}
+
+/*
+ * lockBackupSet resolves the tables in the backup set and takes ACCESS SHARE
+ * locks on them. The catalog is read under the backup snapshot, but LOCK TABLE
+ * resolves names against the live catalog, so a table rewritten (ALTER TABLE
+ * ... SET WITH (REORGANIZE=true), SET DISTRIBUTED BY), truncated, or dropped
+ * and recreated between the two can no longer be read consistently under the
+ * snapshot: its old storage is gone. A table whose name was swapped onto
+ * another table in between is locked and copied as that other table, and a
+ * table dropped, or moved out of its schema, in between cannot be locked at
+ * all. Nothing can change once the locks are held, so the set, partitions
+ * included, is verified after locking. If a lock found a table gone or
+ * anything changed, the snapshot and the resolution are redone, up to
+ * maxSnapshotAttempts times. Relations still changing after the last
+ * attempt are recorded so that their data, and the data of the locked tables
+ * above them, is left out of the backup with a warning; whatever metadata the
+ * backup carries for them is unaffected.
+ */
+func lockBackupSet() ([]Relation, []Relation, map[uint32]string) {
+	changedRelations = make(map[string]bool)
+	skippedDataTables = make(map[string]bool)
+	for attempt := 1; ; attempt++ {
+		includedRelations := GetIncludedUserTableRelations(connectionPool, IncludedRelationFqns)
+		tableRelations := ConvertRelationsOptionsToBackup(includedRelations)
+
+		// Query extension config dump tables early so we can lock them and
+		// include them in the single ConstructDefinitionsForTables call.
+		configDumpRelations, configDumpFilterConds := GetExtensionConfigDumpRelations(connectionPool)
+		tableRelations = append(tableRelations, configDumpRelations...)
+		err := LockTables(connectionPool, tableRelations)
+		if err != nil {
+			if attempt >= maxSnapshotAttempts || !isMissingRelationError(err) {
+				gplog.FatalOnError(err)
+			}
+			gplog.Warn("Could not lock the tables in the backup set: %s; taking a new snapshot (attempt %d of %d)",
+				err, attempt+1, maxSnapshotAttempts)
+			restartBackupTransactions()
+			continue
+		}
+
+		// A metadata-only backup reads nothing but the catalog, which the
+		// snapshot keeps consistent whatever happens to the tables' storage.
+		// The storage check compares the snapshot's relfilenode with the live
+		// one, so it is meaningful only when a synchronized snapshot is in use;
+		// older servers take none, and pg_relation_filenode does not exist
+		// before GPDB 6, so the check is skipped there.
+		if MustGetFlagBool(options.METADATA_ONLY) || connectionPool.Version.Before(SNAPSHOT_GPDB_MIN_VERSION) {
+			return tableRelations, configDumpRelations, configDumpFilterConds
+		}
+		changed := GetRelationsChangedSinceSnapshot(connectionPool, tableRelations)
+		if len(changed) == 0 {
+			return tableRelations, configDumpRelations, configDumpFilterConds
+		}
+
+		if attempt >= maxSnapshotAttempts {
+			for _, relation := range changed {
+				gplog.Warn("Table %s changed on disk after the backup snapshot was taken and was still changing "+
+					"after %d attempt(s); its data will not be backed up.", relation.Describe(), attempt)
+				changedRelations[relation.FQN()] = true
+				for _, ancestor := range relation.Ancestors {
+					changedRelations[ancestor.FQN()] = true
+				}
+			}
+			return tableRelations, configDumpRelations, configDumpFilterConds
+		}
+
+		descriptions := make([]string, len(changed))
+		for i, relation := range changed {
+			descriptions[i] = relation.Describe()
+		}
+		gplog.Warn("Table(s) %s changed on disk after the backup snapshot was taken; taking a new snapshot (attempt %d of %d)",
+			strings.Join(descriptions, ", "), attempt+1, maxSnapshotAttempts)
+		restartBackupTransactions()
+	}
+}
+
+// isMissingRelationError reports whether a LOCK TABLE failed because a table,
+// or its schema, no longer exists under the name the snapshot gave.
+func isMissingRelationError(err error) bool {
+	pgErr, ok := err.(*pgconn.PgError)
+	return ok && (pgErr.Code == PG_UNDEFINED_TABLE || pgErr.Code == PG_INVALID_SCHEMA)
+}
+
+/*
+ * restartBackupTransactions gives every open backup connection a new
+ * transaction on a fresh synchronized snapshot and resolves the include and
+ * exclude lists again under it. Nothing has been written when this runs.
+ *
+ * The session GUCs are set inside the transaction at connection setup, so the
+ * rollback discards them; they are set again the same way, in the same order.
+ */
+func restartBackupTransactions() {
+	backupSnapshot = ""
+	for connNum := 0; connNum < connectionPool.NumConns; connNum++ {
+		if connectionPool.Tx[connNum] == nil {
+			continue
+		}
+		// A rollback fails only when the connection is gone. Begin would
+		// silently open a new one, without the application_name that
+		// cancelBlockedQueries looks for, so stop here as any other query on a
+		// lost connection would.
+		connectionPool.MustRollback(connNum)
+		connectionPool.MustBegin(connNum)
+		if connectionPool.Version.AtLeast(SNAPSHOT_GPDB_MIN_VERSION) {
+			if connNum == 0 {
+				snapshot, err := GetSynchronizedSnapshot(connectionPool)
+				gplog.FatalOnError(err)
+				backupSnapshot = snapshot
+			} else if backupSnapshot != "" {
+				err := SetSynchronizedSnapshot(connectionPool, connNum, backupSnapshot)
+				gplog.FatalOnError(err)
+			}
+		}
+		SetSessionGUCs(connNum)
+	}
+
+	refreshFilterLists()
+}
+
+/*
+ * refreshFilterLists resolves the include and exclude lists again under the
+ * current snapshot by repeating what the backup did when it started, from the
+ * names the user gave: validate them, then expand the include list to the
+ * partitions and dependent tables found now. A table dropped and recreated
+ * under the same name is found by its new OID, and a partition created in the
+ * window is picked up. As at the start, an included table that no longer
+ * exists is fatal.
+ */
+func refreshFilterLists() {
+	filterOptions.ResetIncludedRelations()
+	if flag := cmdFlags.Lookup(options.INCLUDE_RELATION); flag != nil {
+		err := flag.Value.(pflag.SliceValue).Replace(filterOptions.GetOriginalIncludedTables())
+		gplog.FatalOnError(err)
+	}
+	ValidateAndProcessFilterLists(filterOptions)
+	includeOids := GetOidsFromRelationList(IncludedRelationFqns)
+	err := ExpandIncludesForPartitions(connectionPool, filterOptions, includeOids, cmdFlags)
+	gplog.FatalOnError(err)
+	SetFilterRelationClause("")
+}
+
+// removeChangedDataTables takes the tables that changed on disk since the
+// snapshot, or that have a partition that did, out of the data backup set. A
+// table is removed here only; nothing else about it is touched.
+func removeChangedDataTables(dataTables []Table) []Table {
+	if len(changedRelations) == 0 {
+		return dataTables
+	}
+	kept := make([]Table, 0, len(dataTables))
+	for _, table := range dataTables {
+		if changedRelations[table.FQN()] {
+			gplog.Warn("Data for table %s not backed up.", table.FQN())
+			skippedDataTables[table.FQN()] = true
+			continue
+		}
+		kept = append(kept, table)
+	}
+	return kept
 }
 
 func retrieveFunctions(sortables *[]Sortable, metadataMap MetadataMap) ([]Function, map[uint32]FunctionInfo) {

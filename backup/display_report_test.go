@@ -65,6 +65,16 @@ var _ = Describe("display-report internal tests", func() {
 			Expect(backupError).To(Equal("could not dispatch to segment seg0\nconnection refused: server closed"))
 		})
 
+		It("keeps the data-not-backed-up line out of the backup error text", func() {
+			text := "backup status:         Failure\n" +
+				"backup error:          could not dispatch to segment seg0\n\n" +
+				"data not backed up:    public.ao_t, public.heap_t\n\n" +
+				"count of database objects in backup:\ntables 1\n"
+			fields, _, backupError := parseReportText(text)
+			Expect(backupError).To(Equal("could not dispatch to segment seg0"))
+			Expect(fields).To(HaveKeyWithValue("data_not_backed_up", "public.ao_t, public.heap_t"))
+		})
+
 		It("folds a colonless continuation line into the most recently seen key", func() {
 			text := "incremental backup set:\n20260101000000\n20260102000000\n\ncount of database objects in backup:\ntables 1\n"
 			fields, objectCounts, _ := parseReportText(text)

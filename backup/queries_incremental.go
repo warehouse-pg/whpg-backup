@@ -35,8 +35,15 @@ type aoSegTable struct {
 func getAllModCounts(connectionPool *dbconn.DBConn) map[string]int64 {
 	var segTableFQNs = getAOSegTableFQNs(connectionPool)
 	modCounts := make(map[string]int64)
-	for aoTableFQN, segTable := range segTableFQNs {
-		modCounts[aoTableFQN] = getModCount(connectionPool, segTable)
+	for aoTableFQN, segTableFQN := range segTableFQNs {
+		// A relation that changed on disk since the snapshot, or a table whose
+		// data was left out because a partition did, gets no incremental
+		// entry: its data is not backed up, and a changed relation's segment
+		// relation name comes from the snapshot and may no longer exist.
+		if changedRelations[aoTableFQN] {
+			continue
+		}
+		modCounts[aoTableFQN] = getModCount(connectionPool, segTableFQN)
 	}
 	return modCounts
 }

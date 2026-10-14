@@ -7,6 +7,7 @@ package backup
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -378,6 +379,42 @@ func printDataBackupWarnings(numExtTables int64) {
 		gplog.Info("Skipped data backup of %d external/foreign table(s).", numExtTables)
 		gplog.Info("See %s for a complete list of skipped tables.", gplog.GetLogFilePath())
 	}
+}
+
+func printSkippedDataTableWarnings() {
+	if len(skippedDataTables) > 0 {
+		gplog.Warn("Data of %d table(s) not backed up because they changed on disk after the backup snapshot was taken.", len(skippedDataTables))
+		gplog.Warn("See the backup report or %s for the list of tables.", gplog.GetLogFilePath())
+	}
+}
+
+// tablesWithBackedUpData leaves out the tables whose data the backup does not
+// carry: statistics describe data, and a restore creates these tables empty.
+// They are the tables left out of the data backup set, and on 7.x the
+// partitions whose rows such a table, the root of their partition tree,
+// would have carried. A partitioned table whose partitions are backed up
+// each on its own keeps its statistics when one of them is left out.
+func tablesWithBackedUpData(tables []Table) []Table {
+	if len(skippedDataTables) == 0 {
+		return tables
+	}
+	kept := make([]Table, 0, len(tables))
+	for _, table := range tables {
+		if skippedDataTables[table.FQN()] || skippedDataTables[table.AttachPartitionInfo.Parent] {
+			continue
+		}
+		kept = append(kept, table)
+	}
+	return kept
+}
+
+func sortedSkippedDataTables() []string {
+	tables := make([]string, 0, len(skippedDataTables))
+	for fqn := range skippedDataTables {
+		tables = append(tables, fqn)
+	}
+	sort.Strings(tables)
+	return tables
 }
 
 // Remove external/foreign tables from the data backup set

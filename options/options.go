@@ -152,6 +152,12 @@ func (o *Options) AddIncludedRelation(relation string) {
 	o.IncludedRelations = append(o.IncludedRelations, relation)
 }
 
+// ResetIncludedRelations drops the relations added by AddIncludedRelation,
+// leaving the ones the user gave.
+func (o *Options) ResetIncludedRelations() {
+	o.IncludedRelations = append([]string(nil), o.originalIncludedRelations...)
+}
+
 type Relation struct {
 	SchemaOid uint32
 	Oid       uint32

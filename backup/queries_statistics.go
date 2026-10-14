@@ -53,6 +53,9 @@ type AttributeStatistic struct {
 }
 
 func GetAttributeStatistics(connectionPool *dbconn.DBConn, tables []Table) map[uint32][]AttributeStatistic {
+	if len(tables) == 0 {
+		return map[uint32][]AttributeStatistic{}
+	}
 	inheritClause := ""
 	statSlotClause := ""
 	if connectionPool.Version.AtLeast("6") {
@@ -137,6 +140,9 @@ type TupleStatistic struct {
 }
 
 func GetTupleStatistics(connectionPool *dbconn.DBConn, tables []Table) map[uint32]TupleStatistic {
+	if len(tables) == 0 {
+		return map[uint32]TupleStatistic{}
+	}
 	tablenames := make([]string, 0)
 	for _, table := range tables {
 		tablenames = append(tablenames, table.FQN())

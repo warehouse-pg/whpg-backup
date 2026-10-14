@@ -8,6 +8,7 @@ package backup
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -478,8 +479,10 @@ func GetAllViews(connectionPool *dbconn.DBConn) []View {
 // locks for the target relations. This is mainly to protect the metadata
 // dumping part but it also makes the main worker thread (worker 0) the
 // most resilient for the later data dumping logic. Locks will still be
-// taken for --data-only calls.
-func LockTables(connectionPool *dbconn.DBConn, tables []Relation) {
+// taken for --data-only calls. A LOCK TABLE that fails is returned, leaving
+// the transaction aborted, so the caller can tell a table that no longer
+// exists from other errors.
+func LockTables(connectionPool *dbconn.DBConn, tables []Relation) error {
 	gplog.Info("Acquiring ACCESS SHARE locks on tables")
 
 	progressBar := utils.NewProgressBar(len(tables), "Locks acquired: ", utils.PB_VERBOSE)
@@ -505,9 +508,9 @@ func LockTables(connectionPool *dbconn.DBConn, tables []Relation) {
 			if wasTerminated {
 				gplog.Warn("Interrupt received while acquiring ACCESS SHARE locks on tables")
 				select {} // wait for cleanup thread to exit gpbackup
-			} else {
-				gplog.FatalOnError(err)
 			}
+			progressBar.Finish()
+			return err
 		}
 		if i == len(tableBatches)-1 && lastBatchSize > 0 {
 			currentBatchSize = lastBatchSize
@@ -516,6 +519,200 @@ func LockTables(connectionPool *dbconn.DBConn, tables []Relation) {
 	}
 
 	progressBar.Finish()
+	return nil
+}
+
+// RelationChange says how a relation changed after the backup snapshot.
+type RelationChange int
+
+const (
+	// The relation has a new relfilenode: it was rewritten or truncated.
+	RelationRewritten RelationChange = iota
+	// The relation has no relfilenode: it was dropped, and possibly recreated
+	// under the same name.
+	RelationDropped
+	// The relation is intact, but its name now refers to another relation,
+	// e.g. after a rename swap; LOCK TABLE and COPY act on that one.
+	RelationReplaced
+)
+
+// ChangedRelation is a relation that no longer matches what the backup
+// snapshot describes, so its data cannot be read consistently under that
+// snapshot; Change says how. It is either one of the locked tables or a
+// partition below one of them; Ancestors lists the chain of parents up to the
+// locked table, nearest first.
+type ChangedRelation struct {
+	Relation
+	Change    RelationChange
+	Ancestors []Relation
+}
+
+// Reason says what happened to the relation, for warnings.
+func (c ChangedRelation) Reason() string {
+	switch c.Change {
+	case RelationDropped:
+		return "dropped and recreated"
+	case RelationReplaced:
+		return "its name now refers to another table"
+	default:
+		return "rewritten or truncated"
+	}
+}
+
+// Describe names the relation, its Reason, and the table it is a partition of.
+func (c ChangedRelation) Describe() string {
+	if len(c.Ancestors) > 0 {
+		root := c.Ancestors[len(c.Ancestors)-1]
+		return fmt.Sprintf("%s (%s, partition of %s)", c.FQN(), c.Reason(), root.FQN())
+	}
+	return fmt.Sprintf("%s (%s)", c.FQN(), c.Reason())
+}
+
+/*
+ * GetRelationsChangedSinceSnapshot reports which of the given locked tables,
+ * or of the partitions below them, changed on disk between the backup
+ * snapshot and the locks now held.
+ *
+ * The catalog rows come from the backup snapshot, while pg_relation_filenode()
+ * looks the relation up in the live catalog, the same way LOCK TABLE and the
+ * later COPY do. A table rewritten by ALTER TABLE ... SET WITH (REORGANIZE=true)
+ * or SET DISTRIBUTED BY, or a truncated table, has a new relfilenode; a table
+ * dropped (and possibly recreated under the same name) has none. Either way
+ * the snapshot can no longer see the table's data: the old files are gone,
+ * and for append-optimized tables the pg_aoseg relation named under the
+ * snapshot no longer exists. VACUUM FULL and CLUSTER of a heap table also
+ * give it a new relfilenode, although they keep its rows visible to the
+ * snapshot; the check cannot tell them apart and reports them as well.
+ *
+ * LOCK TABLE and COPY also name the locked tables, so each name must still
+ * resolve, in the live catalog, to the relation the snapshot knows by it. A
+ * rename swap (ALTER TABLE t RENAME TO t_old; ALTER TABLE t_new RENAME TO t)
+ * leaves the old relation and its storage intact, but the backup would lock
+ * and copy t_new under t's metadata.
+ *
+ * Partitions are followed through pg_inherits because a backup that does not
+ * use --leaf-partition-data locks and copies the parent only, while the data
+ * lives in the children; LOCK TABLE on the parent locks them too, so the
+ * check is race-free for them as well. Only partitions are followed: COPY of a
+ * table reads its partitions but never the children of plain inheritance,
+ * which are backed up, and checked, as tables of their own. Relations without
+ * storage (relfilenode 0, e.g. partition roots) are not compared. Locked
+ * tables come back in input order, each followed by its changed partitions.
+ */
+func GetRelationsChangedSinceSnapshot(connectionPool *dbconn.DBConn, tables []Relation) []ChangedRelation {
+	if len(tables) == 0 {
+		return nil
+	}
+	type relationStorage struct {
+		Oid                 uint32
+		ParentOid           sql.NullInt64
+		Schema              string
+		Name                string
+		SnapshotRelfilenode uint32
+		CurrentRelfilenode  sql.NullInt64
+		CurrentNameOid      sql.NullInt64
+	}
+	oids := make([]string, 0, len(tables))
+	for _, table := range tables {
+		oids = append(oids, strconv.FormatUint(uint64(table.Oid), 10))
+	}
+	partitionFilter := `i.inhrelid IN (SELECT parchildrelid FROM pg_partition_rule)`
+	// to_regclass takes a cstring before 7.x and a text from 7.x on.
+	currentNameOid := `pg_catalog.to_regclass((quote_ident(n.nspname) || '.' || quote_ident(c.relname))::cstring)::oid`
+	if connectionPool.Version.AtLeast("7") {
+		partitionFilter = `i.inhrelid IN (SELECT oid FROM pg_class WHERE relispartition)`
+		currentNameOid = `pg_catalog.to_regclass(quote_ident(n.nspname) || '.' || quote_ident(c.relname))::oid`
+	}
+	query := fmt.Sprintf(`
+	WITH RECURSIVE inheritance(oid, parentoid) AS (
+		SELECT c.oid, NULL::oid
+		FROM pg_class c
+		WHERE c.oid IN (%s)
+		UNION ALL
+		SELECT i.inhrelid, i.inhparent
+		FROM pg_inherits i
+			JOIN inheritance h ON i.inhparent = h.oid
+		WHERE %s
+	)
+	SELECT DISTINCT h.oid,
+		h.parentoid,
+		quote_ident(n.nspname) AS schema,
+		quote_ident(c.relname) AS name,
+		c.relfilenode AS snapshotrelfilenode,
+		pg_catalog.pg_relation_filenode(c.oid) AS currentrelfilenode,
+		CASE WHEN h.parentoid IS NULL THEN %s END AS currentnameoid
+	FROM inheritance h
+		JOIN pg_class c ON c.oid = h.oid
+		JOIN pg_namespace n ON n.oid = c.relnamespace`, strings.Join(oids, ", "), partitionFilter, currentNameOid)
+	rows := make([]relationStorage, 0)
+	err := connectionPool.Select(&rows, query)
+	gplog.FatalOnError(err)
+
+	locked := make(map[uint32]int, len(tables))
+	for i, table := range tables {
+		locked[table.Oid] = i
+	}
+	relations := make(map[uint32]Relation)
+	parents := make(map[uint32]uint32)
+	changes := make(map[uint32]RelationChange)
+	for _, row := range rows {
+		if _, isLocked := locked[row.Oid]; isLocked {
+			relations[row.Oid] = tables[locked[row.Oid]]
+		} else {
+			relations[row.Oid] = Relation{Oid: row.Oid, Schema: row.Schema, Name: row.Name}
+		}
+		// A partition that is itself locked appears both on its own and
+		// below its parent; keep the parent link.
+		if row.ParentOid.Valid {
+			parents[row.Oid] = uint32(row.ParentOid.Int64)
+		}
+		if _, seen := changes[row.Oid]; seen {
+			continue
+		}
+		storageChanged := row.SnapshotRelfilenode != 0 &&
+			(!row.CurrentRelfilenode.Valid || uint32(row.CurrentRelfilenode.Int64) != row.SnapshotRelfilenode)
+		switch {
+		case storageChanged && !row.CurrentRelfilenode.Valid:
+			changes[row.Oid] = RelationDropped
+		case storageChanged:
+			changes[row.Oid] = RelationRewritten
+		case !row.ParentOid.Valid && (!row.CurrentNameOid.Valid || uint32(row.CurrentNameOid.Int64) != row.Oid):
+			// Only the locked tables are looked up by name, so only their
+			// rows, the ones without a parent, carry the name lookup.
+			changes[row.Oid] = RelationReplaced
+		}
+	}
+
+	ancestorsOf := func(oid uint32) []Relation {
+		ancestors := make([]Relation, 0)
+		for parent, ok := parents[oid]; ok; parent, ok = parents[parent] {
+			ancestors = append(ancestors, relations[parent])
+		}
+		return ancestors
+	}
+	rootIndex := func(oid uint32) int {
+		root := oid
+		for parent, ok := parents[root]; ok; parent, ok = parents[root] {
+			root = parent
+		}
+		return locked[root]
+	}
+
+	changed := make([]ChangedRelation, 0)
+	for oid, change := range changes {
+		changed = append(changed, ChangedRelation{Relation: relations[oid], Change: change, Ancestors: ancestorsOf(oid)})
+	}
+	sort.Slice(changed, func(i, j int) bool {
+		ri, rj := rootIndex(changed[i].Oid), rootIndex(changed[j].Oid)
+		if ri != rj {
+			return ri < rj
+		}
+		if len(changed[i].Ancestors) != len(changed[j].Ancestors) {
+			return len(changed[i].Ancestors) < len(changed[j].Ancestors)
+		}
+		return changed[i].Oid < changed[j].Oid
+	})
+	return changed
 }
 
 // GenerateTableBatches batches tables to reduce network congestion and

@@ -27,12 +27,21 @@ const (
 	Deferred
 	Complete
 	PG_LOCK_NOT_AVAILABLE = "55P03"
+	PG_UNDEFINED_TABLE    = "42P01"
+	PG_INVALID_SCHEMA     = "3F000"
 	ENUM_TYPE_OID         = 3500
 )
 
 /*
  * Non-flag variables
  */
+// SnapshotAttemptsEnvVar names the environment variable that tunes how many
+// snapshots a backup may take when tables change under it; see
+// SetSnapshotAttemptsFromEnvironment.
+const SnapshotAttemptsEnvVar = "WHPGBACKUP_SNAPSHOT_ATTEMPTS"
+
+const defaultSnapshotAttempts = 3
+
 var (
 	backupReport         *report.Report
 	connectionPool       *dbconn.DBConn
@@ -48,6 +57,19 @@ var (
 	filterRelationClause string
 	quotedRoleNames      map[string]string
 	backupSnapshot       string
+	// How many snapshots lockBackupSet may try before it gives up on tables
+	// that keep changing under it and skips their data.
+	maxSnapshotAttempts = defaultSnapshotAttempts
+	// The relations that still did not match the snapshot after the last
+	// attempt, and the locked tables above them, by FQN. Their data cannot be
+	// read under the snapshot, and a changed relation's pg_aoseg name may be
+	// stale.
+	changedRelations map[string]bool
+	// FQNs of the tables left out of the data backup set because of that.
+	skippedDataTables map[string]bool
+	// The filter options the backup started with, kept so the include and
+	// exclude lists can be resolved again under a new snapshot.
+	filterOptions *options.Options
 	/*
 	 * Used for synchronizing DoCleanup.  In DoInit() we increment the group
 	 * and then wait for at least one DoCleanup to finish, either in DoTeardown
@@ -161,6 +183,18 @@ func SetVersion(v string) {
 
 func SetFilterRelationClause(filterClause string) {
 	filterRelationClause = filterClause
+}
+
+func SetMaxSnapshotAttempts(attempts int) {
+	maxSnapshotAttempts = attempts
+}
+
+func GetMaxSnapshotAttempts() int {
+	return maxSnapshotAttempts
+}
+
+func GetSkippedDataTables() map[string]bool {
+	return skippedDataTables
 }
 
 func SetQuotedRoleNames(quotedRoles map[string]string) {
