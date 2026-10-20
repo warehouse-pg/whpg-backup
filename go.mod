@@ -8,7 +8,7 @@ require (
 	github.com/blang/vfs v1.0.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/klauspost/compress v1.15.15
+	github.com/klauspost/compress v1.18.7
 	github.com/mattn/go-sqlite3 v1.14.19
 	github.com/nightlyone/lockfile v1.0.0
 	github.com/onsi/ginkgo/v2 v2.32.0
