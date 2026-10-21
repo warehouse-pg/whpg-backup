@@ -347,6 +347,16 @@ jobs:
           rm -rf /usr/local/go && tar -C /usr/local -xzf "/tmp/${tarball}" && rm -f "/tmp/${tarball}"*
           /usr/local/go/bin/go version
 
+      # Modules are kept under the workspace, which gpadmin owns (see "Create
+      # gpadmin and hand over ownership"), so the build below can use them.
+      - name: Restore the Go module cache
+        uses: actions/cache@v6
+        with:
+          path: .gomodcache
+          key: gomod-${{ hashFiles('whpg-backup/go.sum') }}
+          restore-keys: |
+            gomod-
+
       - name: Build gpbackup and run the suites
         run: |
           set -eu
@@ -361,6 +371,7 @@ jobs:
           # That happened on the first run of this workflow.
           set -euxo pipefail
           export GOPATH="${HOME}/go"
+          export GOMODCACHE="${WORKSPACE}/.gomodcache"
           export PATH="/usr/local/go/bin:${GOPATH}/bin:${PATH}"
           mkdir -p "${GOPATH}/bin"
           source "${GPHOME}/greenplum_path.sh"
@@ -381,6 +392,8 @@ jobs:
           make end_to_end 2>&1 | tee "${RESULTS_DIR}/end_to_end.log"
           SCRIPT
           chmod +x /tmp/run-suites.bash
+          # The restored module cache comes back owned by root.
+          mkdir -p .gomodcache && chown -R gpadmin:gpadmin .gomodcache
           su gpadmin -c "GPHOME='${GPHOME}' WORKSPACE='${GITHUB_WORKSPACE}' RESULTS_DIR='${RESULTS_DIR}' bash /tmp/run-suites.bash"
 
       - name: Collect cluster logs on failure
