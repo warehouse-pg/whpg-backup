@@ -336,11 +336,15 @@ jobs:
       - name: Install Go
         run: |
           set -eu
-          # Track go.mod rather than pinning a version here, so a bump in the
-          # module cannot leave this behind.
-          go_version=$(awk '/^go /{print $2; exit}' whpg-backup/go.mod)
-          curl -fsSL "https://go.dev/dl/go${go_version}.linux-amd64.tar.gz" -o /tmp/go.tgz
-          rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz && rm -f /tmp/go.tgz
+          # The same Go release as build_and_unit_test.yml, which explains the
+          # pin; keep the two in step. setup-go is not used here because this job
+          # runs in the build container, as gpadmin, not on the runner.
+          go_version=1.26.10
+          tarball="go${go_version}.linux-amd64.tar.gz"
+          curl -fsSL --retry 5 --retry-delay 5 "https://dl.google.com/go/${tarball}" -o "/tmp/${tarball}"
+          curl -fsSL --retry 5 --retry-delay 5 "https://dl.google.com/go/${tarball}.sha256" -o "/tmp/${tarball}.sha256"
+          echo "$(cat "/tmp/${tarball}.sha256")  /tmp/${tarball}" | sha256sum -c -
+          rm -rf /usr/local/go && tar -C /usr/local -xzf "/tmp/${tarball}" && rm -f "/tmp/${tarball}"*
           /usr/local/go/bin/go version
 
       - name: Build gpbackup and run the suites
