@@ -388,10 +388,15 @@ jobs:
         run: |
           # Best effort: a failure here must not mask the failure being diagnosed.
           set +e
-          mkdir -p "${RESULTS_DIR}/cluster-logs"
-          cp /home/gpadmin/gpAdminLogs/*.log "${RESULTS_DIR}/cluster-logs/" 2>/dev/null
-          find gpdb_src/gpAux/gpdemo/datadirs -name '*.csv' -o -name 'logfile' -o -name '*.log' \
-            | head -50 | xargs -r -I{} cp --parents {} "${RESULTS_DIR}/cluster-logs/" 2>/dev/null
+          # One tarball rather than loose files: gpAdminLogs names are
+          # <script>_<host>:<user>_<date>.log, and upload-artifact rejects a ':'
+          # in any file name, which used to fail the upload and lose every
+          # result of the very lane that needed diagnosing. The tarball also
+          # keeps each log's place in the cluster layout.
+          {
+            ls -d /home/gpadmin/gpAdminLogs gpdb_src/gpAux/gpdemo/datadirs/gpAdminLogs 2>/dev/null
+            find gpdb_src/gpAux/gpdemo/datadirs \( -name '*.csv' -o -name 'logfile' -o -name '*.log' \) -type f 2>/dev/null
+          } | tar -czf "${RESULTS_DIR}/cluster-logs.tar.gz" --ignore-failed-read -T - 2>/dev/null
           true
 
       - name: Upload results
