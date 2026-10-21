@@ -62,3 +62,28 @@ jobs:
     - name: Unit Test
       run: make unit_all_gpdb_versions
 
+  # The tree has about a hundred findings under the default linters, so this only
+  # reports issues a pull request introduces, rather than failing every run
+  # until the backlog is cleared. Same linter version as `make lint`.
+  lint:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # only-new-issues reads the pull request's diff through the API.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v9
+      with:
+        version: v2.15.0
+        only-new-issues: true
+        args: --tests=false

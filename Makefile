@@ -49,10 +49,10 @@ $(GOSQLITE) :
 format : $(GOIMPORTS)
 		@goimports -w $(shell find . -type f -name '*.go' -not -path "./vendor/*")
 
-LINTER_VERSION=1.16.0
+LINTER_VERSION=2.15.0
 $(GOLANG_LINTER) :
 		mkdir -p $(GOPATH)/bin
-		curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(GOPATH)/bin v${LINTER_VERSION}
+		curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/v${LINTER_VERSION}/install.sh | sh -s -- -b $(GOPATH)/bin v${LINTER_VERSION}
 
 .PHONY : coverage integration end_to_end
 
