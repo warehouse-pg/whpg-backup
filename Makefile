@@ -41,7 +41,7 @@ $(GINKGO) :
 	go install github.com/onsi/ginkgo/v2/ginkgo
 
 $(GOIMPORTS) :
-	go install golang.org/x/tools/cmd/goimports@latest
+	go install golang.org/x/tools/cmd/goimports
 
 $(GOSQLITE) :
 	go install github.com/mattn/go-sqlite3

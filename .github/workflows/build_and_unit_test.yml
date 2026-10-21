@@ -9,6 +9,13 @@ on:
     branches: [ main ]
     types: [ opened, synchronize, reopened, ready_for_review ]
 
+# The Go release CI builds with, pinned here rather than read from go.mod: the
+# go directive there is only the minimum the module needs, and a patch release
+# below this still carries standard library vulnerabilities whpg-backup calls
+# into. Keep in step with live_suites.yml.
+env:
+  GO_VERSION: '1.26.10'
+
 jobs:
 
   build_and_unit_test:
@@ -22,9 +29,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v7
       with:
-        # Track the go directive rather than a hardcoded version, so a bump in
-        # go.mod cannot silently leave CI behind.
-        go-version-file: go.mod
+        go-version: ${{ env.GO_VERSION }}
 
     # The Makefile requires GOPATH outright, and installs ginkgo into
     # $GOPATH/bin then invokes it by bare name, so both the variable and the bin
