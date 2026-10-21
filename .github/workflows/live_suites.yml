@@ -244,9 +244,9 @@ jobs:
           # builds ORCA as C++14.
           #
           # Not worth it here: these suites read catalog metadata, so which optimizer
-          # plans the queries does not change what they assert, and WHPG6 with ORCA
-          # stays covered by whpg-backup-packaging's lane against the released
-          # package.
+          # plans the queries does not change what they assert. The released WHPG6
+          # server packages, which are built with ORCA, are tested against
+          # separately when whpg-backup is packaged.
           CC='ccache gcc -m64' CFLAGS='-O2 -g3' \
           LDFLAGS='-Wl,--enable-new-dtags -Wl,--export-dynamic' \
           ./configure ${{ matrix.extra_configure }} ${CONFIGURE_FLAGS} --disable-rpath \
