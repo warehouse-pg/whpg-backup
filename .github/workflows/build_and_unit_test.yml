@@ -9,6 +9,14 @@ on:
     branches: [ main ]
     types: [ opened, synchronize, reopened, ready_for_review ]
 
+permissions:
+  contents: read
+
+# Same as live_suites: a new push to a pull request supersedes the run in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # The Go release CI builds with, pinned here rather than read from go.mod: the
 # go directive there is only the minimum the module needs, and a patch release
 # below this still carries standard library vulnerabilities whpg-backup calls
@@ -20,6 +28,8 @@ jobs:
 
   build_and_unit_test:
     runs-on: ubuntu-latest
+    # A normal run takes about two minutes.
+    timeout-minutes: 20
     steps:
     - uses: actions/checkout@v7
       with:
@@ -51,3 +61,4 @@ jobs:
 
     - name: Unit Test
       run: make unit_all_gpdb_versions
+
