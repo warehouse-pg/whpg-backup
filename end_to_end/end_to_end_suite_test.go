@@ -1794,7 +1794,7 @@ var _ = Describe("backup and restore end to end tests", func() {
 			Expect(stdout).To(Not(ContainSubstring("Error encountered when executing statement")))
 		})
 		Describe("Edge case tests", func() {
-			It("restores a foreign key that references a unique index which is not a constraint", func() {
+			It("restores foreign keys that reference a unique index which is not a constraint", func() {
 				if useOldBackupVersion {
 					Skip("Older versions of gpbackup do not back up a unique index that a foreign key references")
 				}
@@ -1811,17 +1811,48 @@ CREATE TABLE schema_fk_unique_index.referenced_table(i int, j int) DISTRIBUTED B
 CREATE INDEX referenced_table_idx1 ON schema_fk_unique_index.referenced_table(j);
 CREATE UNIQUE INDEX referenced_table_idx2 ON schema_fk_unique_index.referenced_table(i);
 CREATE TABLE schema_fk_unique_index.referencing_table(i int,
-	CONSTRAINT referencing_table_fk FOREIGN KEY (i) REFERENCES schema_fk_unique_index.referenced_table(i)) DISTRIBUTED BY (i);`)
+	CONSTRAINT referencing_table_fk FOREIGN KEY (i) REFERENCES schema_fk_unique_index.referenced_table(i)) DISTRIBUTED BY (i);
+COMMENT ON CONSTRAINT referencing_table_fk ON schema_fk_unique_index.referencing_table IS 'this is a constraint comment';`)
+				// Two tables that reference each other: their foreign keys
+				// deadlock when they are added at the same time.
+				testhelper.AssertQueryRuns(backupConn, `
+CREATE TABLE schema_fk_unique_index.mutual1(i int, j int) DISTRIBUTED BY (i);
+CREATE TABLE schema_fk_unique_index.mutual2(i int, j int) DISTRIBUTED BY (i);
+CREATE UNIQUE INDEX mutual1_idx ON schema_fk_unique_index.mutual1(i);
+CREATE UNIQUE INDEX mutual2_idx ON schema_fk_unique_index.mutual2(i);
+ALTER TABLE schema_fk_unique_index.mutual1 ADD CONSTRAINT mutual1_fk FOREIGN KEY (j) REFERENCES schema_fk_unique_index.mutual2(i);
+ALTER TABLE schema_fk_unique_index.mutual2 ADD CONSTRAINT mutual2_fk FOREIGN KEY (j) REFERENCES schema_fk_unique_index.mutual1(i);`)
+				expectedTables, expectedIndexes, expectedForeignKeys := 4, 4, 3
+				foreignKeyQuery := "SELECT count(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace WHERE n.nspname = 'schema_fk_unique_index' AND c.contype = 'f'"
+				if backupConn.Version.AtLeast("7") {
+					// The unique index of a partitioned table is only usable
+					// once the indexes of its partitions are attached to it.
+					testhelper.AssertQueryRuns(backupConn, `
+CREATE TABLE schema_fk_unique_index.part_referenced(i int, j int) DISTRIBUTED BY (i) PARTITION BY RANGE (j);
+CREATE TABLE schema_fk_unique_index.part_referenced_1 PARTITION OF schema_fk_unique_index.part_referenced FOR VALUES FROM (0) TO (10);
+CREATE UNIQUE INDEX part_referenced_idx ON schema_fk_unique_index.part_referenced(i, j);
+CREATE TABLE schema_fk_unique_index.part_referencing(i int, j int,
+	CONSTRAINT part_referencing_fk FOREIGN KEY (i, j) REFERENCES schema_fk_unique_index.part_referenced(i, j)) DISTRIBUTED BY (i);`)
+					expectedTables, expectedIndexes, expectedForeignKeys = 7, 6, 4
+					// Leave out the per-partition rows of a foreign key
+					foreignKeyQuery += " AND c.conparentid = 0"
+				}
 				output := gpbackup(gpbackupPath, backupHelperPath, "--metadata-only", "--include-schema", "schema_fk_unique_index")
 				timestamp := getBackupTimestamp(string(output))
 
-				gprestore(gprestorePath, restoreHelperPath, timestamp,
-					"--redirect-db", "restoredb")
-				assertRelationsCreatedInSchema(restoreConn, "schema_fk_unique_index", 2)
-				indexCount := dbconn.MustSelectString(restoreConn, "SELECT count(*) FROM pg_indexes WHERE schemaname = 'schema_fk_unique_index'")
-				Expect(indexCount).To(Equal("2"))
-				foreignKeyCount := dbconn.MustSelectString(restoreConn, "SELECT count(*) FROM pg_constraint WHERE conname = 'referencing_table_fk' AND contype = 'f'")
-				Expect(foreignKeyCount).To(Equal("1"))
+				for _, jobs := range []string{"1", "4"} {
+					testhelper.AssertQueryRuns(restoreConn,
+						"DROP SCHEMA IF EXISTS schema_fk_unique_index CASCADE")
+					gprestore(gprestorePath, restoreHelperPath, timestamp,
+						"--redirect-db", "restoredb", "--jobs", jobs)
+					assertRelationsCreatedInSchema(restoreConn, "schema_fk_unique_index", expectedTables)
+					indexCount := dbconn.MustSelectString(restoreConn, "SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'schema_fk_unique_index' AND i.indisvalid")
+					Expect(indexCount).To(Equal(strconv.Itoa(expectedIndexes)))
+					foreignKeyCount := dbconn.MustSelectString(restoreConn, foreignKeyQuery)
+					Expect(foreignKeyCount).To(Equal(strconv.Itoa(expectedForeignKeys)))
+					commentCount := dbconn.MustSelectString(restoreConn, "SELECT count(*) FROM pg_description d JOIN pg_constraint c ON c.oid = d.objoid WHERE d.classoid = 'pg_constraint'::regclass AND c.conname = 'referencing_table_fk'")
+					Expect(commentCount).To(Equal("1"))
+				}
 			})
 			It(`successfully backs up precise real data types`, func() {
 				// Versions before 1.13.0 do not set the extra_float_digits GUC

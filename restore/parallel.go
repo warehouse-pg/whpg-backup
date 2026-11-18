@@ -231,62 +231,110 @@ func ExecuteStatements(statements []toc.StatementWithType, progressBar utils.Pro
 }
 
 /*
- *   There is an existing bug in Greenplum where creating indexes in parallel
- *   on an AO table that didn't have any indexes previously can cause
- *   deadlock.
+ * BatchPostdataStatements splits the postdata statements into batches that
+ * are executed one after the other, in the order they are returned. The
+ * statements of one batch may run in parallel.
  *
- *   We work around this issue by restoring post data objects in
- *   two batches. The first batch takes one index from each table and
- *   restores them in parallel (which has no possibility of deadlock) and
- *   then the second restores all other postdata objects in parallel. After
- *   each table has at least one index, there is no more risk of deadlock.
+ * 1. One index of every table. There is an existing bug in Greenplum where
+ *    creating indexes in parallel on an AO table that didn't have any indexes
+ *    previously can cause deadlock. Once each table has at least one index,
+ *    there is no more risk of deadlock.
  *
- *   FOREIGN KEY constraints get a batch of their own that runs after
- *   the second one. A foreign key needs the primary key, unique
- *   constraint or unique index of the table it references, and those
- *   are created in the first two batches. The backup file lists
- *   constraints before indexes, so a foreign key that references a
- *   plain unique index would otherwise run before that index exists.
+ * 2. All other postdata objects, apart from the ones named below.
  *
- *   A last batch is created specifically for postdata metadata
- *   (e.g. ALTER INDEX, ALTER EVENT TRIGGER, COMMENT ON). These
- *   statements cannot be concurrently run with the earlier batches
- *   since that is where the dependent postdata objects are being
- *   created.
+ * 3. Postdata metadata (e.g. ALTER INDEX, COMMENT ON). These statements
+ *    cannot be run concurrently with batch two since that is where the
+ *    objects they depend on are being created.
+ *
+ * 4. FOREIGN KEY constraints. A foreign key needs the primary key, unique
+ *    constraint or unique index of the table it references. The backup file
+ *    lists constraints before indexes, so a foreign key that references a
+ *    plain unique index would otherwise run before that index exists. The
+ *    unique index of a partitioned table only becomes usable once the
+ *    indexes of its partitions are attached to it, which happens in batch
+ *    three.
+ *
+ *    This batch must not run in parallel: adding a foreign key locks the
+ *    table it is added to and then the table it references, so two tables
+ *    that reference each other would deadlock. Foreign keys are not
+ *    validated against the data, so adding them one by one is cheap.
+ *
+ * 5. Event triggers. They are created after everything else so that they do
+ *    not fire on, and possibly reject, the statements of the restore itself.
+ *
+ * 6. The metadata of the foreign keys and of the event triggers.
  */
-func BatchPostdataStatements(statements []toc.StatementWithType) ([]toc.StatementWithType, []toc.StatementWithType, []toc.StatementWithType, []toc.StatementWithType) {
-	indexMap := make(map[string]bool)
-	firstBatch := make([]toc.StatementWithType, 0)
-	secondBatch := make([]toc.StatementWithType, 0)
-	foreignKeyBatch := make([]toc.StatementWithType, 0)
-	metadataBatch := make([]toc.StatementWithType, 0)
+const (
+	postdataFirstIndexes = iota
+	postdataOtherObjects
+	postdataMetadata
+	// PostdataForeignKeyBatch is the position of the foreign key batch in the
+	// result of BatchPostdataStatements
+	PostdataForeignKeyBatch
+	postdataEventTriggers
+	postdataLateMetadata
+	numPostdataBatches
+)
+
+func BatchPostdataStatements(statements []toc.StatementWithType) [][]toc.StatementWithType {
+	batches := make([][]toc.StatementWithType, numPostdataBatches)
+	for i := range batches {
+		batches[i] = make([]toc.StatementWithType, 0)
+	}
+
+	// The comment on a constraint does not say what kind of constraint it
+	// belongs to, so remember the foreign keys to recognize their comments.
+	foreignKeyNames := make(map[string]bool)
 	for _, statement := range statements {
+		if isForeignKeyConstraint(statement) {
+			foreignKeyNames[constraintKey(statement)] = true
+		}
+	}
+
+	indexMap := make(map[string]bool)
+	for _, statement := range statements {
+		batch := postdataOtherObjects
 		_, tableIndexPresent := indexMap[statement.ReferenceObject]
 		if statement.ObjectType == toc.OBJ_INDEX && !tableIndexPresent {
 			indexMap[statement.ReferenceObject] = true
-			firstBatch = append(firstBatch, statement)
+			batch = postdataFirstIndexes
+		} else if statement.ObjectType == toc.OBJ_EVENT_TRIGGER+" METADATA" ||
+			(statement.ObjectType == toc.OBJ_CONSTRAINT+" METADATA" && foreignKeyNames[constraintKey(statement)]) {
+			batch = postdataLateMetadata
 		} else if strings.Contains(statement.ObjectType, " METADATA") {
-			metadataBatch = append(metadataBatch, statement)
+			batch = postdataMetadata
 		} else if isForeignKeyConstraint(statement) {
-			foreignKeyBatch = append(foreignKeyBatch, statement)
-		} else {
-			secondBatch = append(secondBatch, statement)
+			batch = PostdataForeignKeyBatch
+		} else if statement.ObjectType == toc.OBJ_EVENT_TRIGGER {
+			batch = postdataEventTriggers
 		}
+		batches[batch] = append(batches[batch], statement)
 	}
-	return firstBatch, secondBatch, foreignKeyBatch, metadataBatch
+	return batches
 }
 
 /*
  * The table of contents does not record the type of a constraint, so it is
  * read from the statement, which gpbackup writes as
  * ALTER TABLE [ONLY] <table> ADD CONSTRAINT <name> <definition>;
- * The name is skipped as a whole, quoted or not, so that a constraint whose
- * name contains the words FOREIGN KEY is not taken for one.
+ * The table and the constraint name are skipped as a whole, quoted or not, so
+ * that a name which contains the words FOREIGN KEY is not taken for one.
  */
-var foreignKeyConstraintRegex = regexp.MustCompile(`\sADD CONSTRAINT ("(?:[^"]|"")*"|[^"\s]+) FOREIGN KEY\b`)
+var foreignKeyConstraintRegex = regexp.MustCompile(`^\s*ALTER TABLE (?:ONLY )?(?:"(?:[^"]|"")*"|[^"\s.]+)(?:\.(?:"(?:[^"]|"")*"|[^"\s.]+))? ADD CONSTRAINT (?:"(?:[^"]|"")*"|[^"\s]+) FOREIGN KEY\b`)
 
 func isForeignKeyConstraint(statement toc.StatementWithType) bool {
 	return statement.ObjectType == toc.OBJ_CONSTRAINT && foreignKeyConstraintRegex.MatchString(statement.Statement)
+}
+
+/*
+ * A constraint and its comment share the schema and the name in the table of
+ * contents; the comment does not carry the table. Constraint names are only
+ * unique within a table, so the comment of another constraint with the same
+ * name can be taken for the comment of a foreign key. It then merely runs in
+ * a later batch.
+ */
+func constraintKey(statement toc.StatementWithType) string {
+	return utils.MakeFQN(statement.Schema, statement.Name)
 }
 
 func BatchPredataStatements(statements []toc.StatementWithType) ([]toc.StatementWithType, map[uint32][]toc.StatementWithType, []toc.StatementWithType) {
