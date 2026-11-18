@@ -1794,6 +1794,35 @@ var _ = Describe("backup and restore end to end tests", func() {
 			Expect(stdout).To(Not(ContainSubstring("Error encountered when executing statement")))
 		})
 		Describe("Edge case tests", func() {
+			It("restores a foreign key that references a unique index which is not a constraint", func() {
+				if useOldBackupVersion {
+					Skip("Older versions of gpbackup do not back up a unique index that a foreign key references")
+				}
+				testhelper.AssertQueryRuns(backupConn,
+					"CREATE SCHEMA schema_fk_unique_index")
+				defer testhelper.AssertQueryRuns(backupConn,
+					"DROP SCHEMA schema_fk_unique_index CASCADE")
+				defer testhelper.AssertQueryRuns(restoreConn,
+					"DROP SCHEMA IF EXISTS schema_fk_unique_index CASCADE")
+				// The unique index is the second index of its table: gprestore
+				// creates the first index of every table ahead of the rest.
+				testhelper.AssertQueryRuns(backupConn, `
+CREATE TABLE schema_fk_unique_index.referenced_table(i int, j int) DISTRIBUTED BY (i);
+CREATE INDEX referenced_table_idx1 ON schema_fk_unique_index.referenced_table(j);
+CREATE UNIQUE INDEX referenced_table_idx2 ON schema_fk_unique_index.referenced_table(i);
+CREATE TABLE schema_fk_unique_index.referencing_table(i int,
+	CONSTRAINT referencing_table_fk FOREIGN KEY (i) REFERENCES schema_fk_unique_index.referenced_table(i)) DISTRIBUTED BY (i);`)
+				output := gpbackup(gpbackupPath, backupHelperPath, "--metadata-only", "--include-schema", "schema_fk_unique_index")
+				timestamp := getBackupTimestamp(string(output))
+
+				gprestore(gprestorePath, restoreHelperPath, timestamp,
+					"--redirect-db", "restoredb")
+				assertRelationsCreatedInSchema(restoreConn, "schema_fk_unique_index", 2)
+				indexCount := dbconn.MustSelectString(restoreConn, "SELECT count(*) FROM pg_indexes WHERE schemaname = 'schema_fk_unique_index'")
+				Expect(indexCount).To(Equal("2"))
+				foreignKeyCount := dbconn.MustSelectString(restoreConn, "SELECT count(*) FROM pg_constraint WHERE conname = 'referencing_table_fk' AND contype = 'f'")
+				Expect(foreignKeyCount).To(Equal("1"))
+			})
 			It(`successfully backs up precise real data types`, func() {
 				// Versions before 1.13.0 do not set the extra_float_digits GUC
 				skipIfOldBackupVersionBefore("1.13.0")

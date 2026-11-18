@@ -6,6 +6,7 @@ package restore
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -240,28 +241,52 @@ func ExecuteStatements(statements []toc.StatementWithType, progressBar utils.Pro
  *   then the second restores all other postdata objects in parallel. After
  *   each table has at least one index, there is no more risk of deadlock.
  *
- *   A third batch is created specifically for postdata metadata
+ *   FOREIGN KEY constraints get a batch of their own that runs after
+ *   the second one. A foreign key needs the primary key, unique
+ *   constraint or unique index of the table it references, and those
+ *   are created in the first two batches. The backup file lists
+ *   constraints before indexes, so a foreign key that references a
+ *   plain unique index would otherwise run before that index exists.
+ *
+ *   A last batch is created specifically for postdata metadata
  *   (e.g. ALTER INDEX, ALTER EVENT TRIGGER, COMMENT ON). These
- *   statements cannot be concurrently run with batch two since that
- *   is where the dependent postdata objects are being created.
+ *   statements cannot be concurrently run with the earlier batches
+ *   since that is where the dependent postdata objects are being
+ *   created.
  */
-func BatchPostdataStatements(statements []toc.StatementWithType) ([]toc.StatementWithType, []toc.StatementWithType, []toc.StatementWithType) {
+func BatchPostdataStatements(statements []toc.StatementWithType) ([]toc.StatementWithType, []toc.StatementWithType, []toc.StatementWithType, []toc.StatementWithType) {
 	indexMap := make(map[string]bool)
 	firstBatch := make([]toc.StatementWithType, 0)
 	secondBatch := make([]toc.StatementWithType, 0)
-	thirdBatch := make([]toc.StatementWithType, 0)
+	foreignKeyBatch := make([]toc.StatementWithType, 0)
+	metadataBatch := make([]toc.StatementWithType, 0)
 	for _, statement := range statements {
 		_, tableIndexPresent := indexMap[statement.ReferenceObject]
 		if statement.ObjectType == toc.OBJ_INDEX && !tableIndexPresent {
 			indexMap[statement.ReferenceObject] = true
 			firstBatch = append(firstBatch, statement)
 		} else if strings.Contains(statement.ObjectType, " METADATA") {
-			thirdBatch = append(thirdBatch, statement)
+			metadataBatch = append(metadataBatch, statement)
+		} else if isForeignKeyConstraint(statement) {
+			foreignKeyBatch = append(foreignKeyBatch, statement)
 		} else {
 			secondBatch = append(secondBatch, statement)
 		}
 	}
-	return firstBatch, secondBatch, thirdBatch
+	return firstBatch, secondBatch, foreignKeyBatch, metadataBatch
+}
+
+/*
+ * The table of contents does not record the type of a constraint, so it is
+ * read from the statement, which gpbackup writes as
+ * ALTER TABLE [ONLY] <table> ADD CONSTRAINT <name> <definition>;
+ * The name is skipped as a whole, quoted or not, so that a constraint whose
+ * name contains the words FOREIGN KEY is not taken for one.
+ */
+var foreignKeyConstraintRegex = regexp.MustCompile(`\sADD CONSTRAINT ("(?:[^"]|"")*"|[^"\s]+) FOREIGN KEY\b`)
+
+func isForeignKeyConstraint(statement toc.StatementWithType) bool {
+	return statement.ObjectType == toc.OBJ_CONSTRAINT && foreignKeyConstraintRegex.MatchString(statement.Statement)
 }
 
 func BatchPredataStatements(statements []toc.StatementWithType) ([]toc.StatementWithType, map[uint32][]toc.StatementWithType, []toc.StatementWithType) {

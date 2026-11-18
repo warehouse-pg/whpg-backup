@@ -549,13 +549,14 @@ func restorePostdata(metadataFilename string) {
 
 	statements := GetRestoreMetadataStatementsFiltered("postdata", metadataFilename, []string{}, []string{}, filters)
 	editStatementsRedirectSchema(statements, opts.RedirectSchema)
-	firstBatch, secondBatch, thirdBatch := BatchPostdataStatements(statements)
+	firstBatch, secondBatch, foreignKeyBatch, metadataBatch := BatchPostdataStatements(statements)
 	progressBar := utils.NewProgressBar(len(statements), "Post-data objects restored: ", utils.PB_VERBOSE)
 	progressBar.Start()
 
 	numErrors := ExecuteRestoreMetadataStatements("postdata", firstBatch, "", progressBar, utils.PB_VERBOSE, connectionPool.NumConns > 1)
 	numErrors += ExecuteRestoreMetadataStatements("postdata", secondBatch, "", progressBar, utils.PB_VERBOSE, connectionPool.NumConns > 1)
-	numErrors += ExecuteRestoreMetadataStatements("postdata", thirdBatch, "", progressBar, utils.PB_VERBOSE, connectionPool.NumConns > 1)
+	numErrors += ExecuteRestoreMetadataStatements("postdata", foreignKeyBatch, "", progressBar, utils.PB_VERBOSE, connectionPool.NumConns > 1)
+	numErrors += ExecuteRestoreMetadataStatements("postdata", metadataBatch, "", progressBar, utils.PB_VERBOSE, connectionPool.NumConns > 1)
 	progressBar.Finish()
 
 	if wasTerminated {
