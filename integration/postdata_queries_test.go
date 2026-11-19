@@ -103,6 +103,22 @@ var _ = Describe("backup integration tests", func() {
 			structmatcher.ExpectStructsToMatch(&index1, &userIndex[0])
 			structmatcher.ExpectStructsToMatch(&index2, &userIndex[1])
 		})
+		It("returns a unique index that a foreign key references as a user index", func() {
+			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.referenced_table(i int, j int) DISTRIBUTED BY (i)")
+			defer testhelper.AssertQueryRuns(connectionPool, "DROP TABLE public.referenced_table CASCADE")
+			testhelper.AssertQueryRuns(connectionPool, "CREATE UNIQUE INDEX referenced_table_idx ON public.referenced_table(i)")
+			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.referencing_table(i int, CONSTRAINT referencing_table_fk FOREIGN KEY (i) REFERENCES public.referenced_table(i)) DISTRIBUTED BY (i)")
+			defer testhelper.AssertQueryRuns(connectionPool, "DROP TABLE public.referencing_table")
+
+			index1 := backup.IndexDefinition{Oid: 0, Name: "referenced_table_idx", OwningSchema: "public", OwningTable: "referenced_table", Def: sql.NullString{String: "CREATE UNIQUE INDEX referenced_table_idx ON public.referenced_table USING btree (i)", Valid: true}}
+
+			results := backup.GetIndexes(connectionPool)
+
+			// The foreign key relies on the index but does not own it
+			Expect(results).To(HaveLen(1))
+			index1.Oid = testutils.OidFromObjectName(connectionPool, "public", "referenced_table_idx", backup.TYPE_RELATION)
+			Expect(&results[0]).To(structmatcher.MatchStruct(&index1))
+		})
 		It("returns a slice of indexes for only partition parent tables", func() {
 			// In GPDB 7+, all partitions will have their own CREATE INDEX statement
 			// followed by an ALTER INDEX ATTACH PARTITION statement
