@@ -325,7 +325,7 @@ func GetColumnDefinitions(connectionPool *dbconn.DBConn) map[uint32][]ColumnDefi
 			WHEN array_upper(a.attacl, 1) = 0 THEN 'Empty'
 			ELSE ''
 		END AS kind,
-		coalesce(pg_catalog.array_to_string(a.attoptions, ','), '') AS options,
+		coalesce(pg_catalog.array_to_string(ARRAY(SELECT o FROM unnest(a.attoptions) o WHERE substr(o, 1, 10) <> 'pg_attver='), ','), '') AS options,
 		coalesce(array_to_string(ARRAY(SELECT option_name || ' ' || quote_literal(option_value) FROM pg_options_to_table(attfdwoptions) ORDER BY option_name), ', '), '') AS fdwoptions,
 		CASE WHEN a.attcollation <> t.typcollation THEN quote_ident(cn.nspname) || '.' || quote_ident(coll.collname) ELSE '' END AS collation,
 		coalesce(sec.provider,'') AS securitylabelprovider,
@@ -383,7 +383,7 @@ func GetColumnDefinitions(connectionPool *dbconn.DBConn) map[uint32][]ColumnDefi
 			WHEN array_upper(a.attacl, 1) = 0 THEN 'Empty'
 			ELSE ''
 		END AS kind,
-		coalesce(pg_catalog.array_to_string(a.attoptions, ','), '') AS options,
+		coalesce(pg_catalog.array_to_string(ARRAY(SELECT o FROM unnest(a.attoptions) o WHERE substr(o, 1, 10) <> 'pg_attver='), ','), '') AS options,
 		coalesce(array_to_string(ARRAY(SELECT option_name || ' ' || quote_literal(option_value) FROM pg_options_to_table(attfdwoptions) ORDER BY option_name), ', '), '') AS fdwoptions,
 		CASE WHEN a.attcollation <> t.typcollation THEN quote_ident(cn.nspname) || '.' || quote_ident(coll.collname) ELSE '' END AS collation,
 		coalesce(sec.provider,'') AS securitylabelprovider,
