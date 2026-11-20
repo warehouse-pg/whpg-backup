@@ -128,6 +128,23 @@ PARTITION BY RANGE (year)
 
 			structmatcher.ExpectStructsToMatchExcluding(&columnA, &tableAtts[0], "Oid")
 		})
+		It("leaves out the internal attribute version option", func() {
+			testutils.SkipIfBefore6(connectionPool)
+			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.attvertable(i int, j text)")
+			defer testhelper.AssertQueryRuns(connectionPool, "DROP TABLE public.attvertable")
+			testhelper.AssertQueryRuns(connectionPool, "ALTER TABLE ONLY public.attvertable ALTER COLUMN j SET (n_distinct=1)")
+			// A server with attribute versioning stores this key by itself. Write
+			// it directly where it is missing, so that the test does not depend
+			// on the server having that change.
+			testhelper.AssertQueryRuns(connectionPool, `UPDATE pg_attribute SET attoptions = array_cat(ARRAY['pg_attver=123456'], attoptions)
+				WHERE attrelid = 'public.attvertable'::regclass AND attnum > 0 AND coalesce(attoptions::text, '') NOT LIKE '%pg_attver=%'`)
+			oid := testutils.OidFromObjectName(connectionPool, "public", "attvertable", backup.TYPE_RELATION)
+			tableAtts := backup.GetColumnDefinitions(connectionPool)[oid]
+
+			Expect(tableAtts).To(HaveLen(2))
+			Expect(tableAtts[0].Options).To(Equal(""))
+			Expect(tableAtts[1].Options).To(Equal("n_distinct=1"))
+		})
 		It("returns table attributes with foreign data options", func() {
 			testutils.SkipIfBefore6(connectionPool)
 			testhelper.AssertQueryRuns(connectionPool, "CREATE FOREIGN DATA WRAPPER dummy;")

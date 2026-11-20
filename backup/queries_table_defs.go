@@ -13,6 +13,7 @@ import (
 
 	"github.com/greenplum-db/gpbackup/options"
 	"github.com/greenplum-db/gpbackup/toc"
+	"github.com/greenplum-db/gpbackup/utils"
 	"github.com/warehouse-pg/common-go-libs/dbconn"
 	"github.com/warehouse-pg/common-go-libs/gplog"
 )
@@ -266,6 +267,16 @@ var attGeneratedCodes = map[string]string{
 	"v": "VIRTUAL",
 }
 
+/*
+ * The column options of pg_attribute row "a" that belong to the user. A
+ * server with attribute versioning keeps an internal entry in attoptions; it
+ * cannot be set by the user, and a server without attribute versioning
+ * rejects it, so it must not end up in a backup.
+ */
+var userAttributeOptions = fmt.Sprintf(
+	`ARRAY(SELECT o FROM unnest(a.attoptions) o WHERE substr(o, 1, %d) <> '%s')`,
+	len(utils.AttributeVersionOption)+1, utils.AttributeVersionOption+"=")
+
 func GetColumnDefinitions(connectionPool *dbconn.DBConn) map[uint32][]ColumnDefinition {
 	// This query is adapted from the getTableAttrs() function in pg_dump.c.
 	// Optimize Get column definitions to avoid child partitions
@@ -325,7 +336,7 @@ func GetColumnDefinitions(connectionPool *dbconn.DBConn) map[uint32][]ColumnDefi
 			WHEN array_upper(a.attacl, 1) = 0 THEN 'Empty'
 			ELSE ''
 		END AS kind,
-		coalesce(pg_catalog.array_to_string(a.attoptions, ','), '') AS options,
+		coalesce(pg_catalog.array_to_string(`+userAttributeOptions+`, ','), '') AS options,
 		coalesce(array_to_string(ARRAY(SELECT option_name || ' ' || quote_literal(option_value) FROM pg_options_to_table(attfdwoptions) ORDER BY option_name), ', '), '') AS fdwoptions,
 		CASE WHEN a.attcollation <> t.typcollation THEN quote_ident(cn.nspname) || '.' || quote_ident(coll.collname) ELSE '' END AS collation,
 		coalesce(sec.provider,'') AS securitylabelprovider,
@@ -383,7 +394,7 @@ func GetColumnDefinitions(connectionPool *dbconn.DBConn) map[uint32][]ColumnDefi
 			WHEN array_upper(a.attacl, 1) = 0 THEN 'Empty'
 			ELSE ''
 		END AS kind,
-		coalesce(pg_catalog.array_to_string(a.attoptions, ','), '') AS options,
+		coalesce(pg_catalog.array_to_string(`+userAttributeOptions+`, ','), '') AS options,
 		coalesce(array_to_string(ARRAY(SELECT option_name || ' ' || quote_literal(option_value) FROM pg_options_to_table(attfdwoptions) ORDER BY option_name), ', '), '') AS fdwoptions,
 		CASE WHEN a.attcollation <> t.typcollation THEN quote_ident(cn.nspname) || '.' || quote_ident(coll.collname) ELSE '' END AS collation,
 		coalesce(sec.provider,'') AS securitylabelprovider,

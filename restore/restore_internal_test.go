@@ -145,6 +145,72 @@ var _ = Describe("restore internal tests", func() {
 		})
 	})
 
+	Describe("removeAttributeVersionOptions", func() {
+		create := "\n\nCREATE TABLE public.foo (\n\ti integer,\n\tj text\n) DISTRIBUTED BY (i);\n"
+		It("drops a column statement that only sets the attribute version", func() {
+			stmts := []toc.StatementWithType{{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,
+				Statement: create +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN i SET (pg_attver=2462773192);" +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET STATISTICS 5;" +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (pg_attver=2462773192);"}}
+			removeAttributeVersionOptions(stmts)
+			Expect(stmts[0].Statement).To(Equal(create +
+				"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET STATISTICS 5;"))
+		})
+		It("keeps the other options of a column", func() {
+			stmts := []toc.StatementWithType{{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,
+				Statement: create +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN i SET (pg_attver=7,n_distinct=1);" +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (n_distinct=7,pg_attver=7,n_distinct_inherited=3);\n"}}
+			removeAttributeVersionOptions(stmts)
+			Expect(stmts[0].Statement).To(Equal(create +
+				"\nALTER TABLE ONLY public.foo ALTER COLUMN i SET (n_distinct=1);" +
+				"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (n_distinct=7,n_distinct_inherited=3);\n"))
+		})
+		It("handles a foreign table and a quoted name", func() {
+			stmts := []toc.StatementWithType{{Schema: "public", Name: `"my tab"`, ObjectType: toc.OBJ_FOREIGN_TABLE,
+				Statement: "\n\nCREATE FOREIGN TABLE public.\"my tab\" (\n\t\"a col\" integer\n) SERVER s ;\n" +
+					"\nALTER TABLE ONLY public.\"my tab\" ALTER COLUMN \"a col\" SET (pg_attver=12);"}}
+			removeAttributeVersionOptions(stmts)
+			Expect(stmts[0].Statement).To(Equal("\n\nCREATE FOREIGN TABLE public.\"my tab\" (\n\t\"a col\" integer\n) SERVER s ;\n"))
+		})
+		It("handles names that contain line breaks and quotes", func() {
+			createNl := "\n\nCREATE TABLE public.\"nl\ntab\" (\n\tid integer,\n\t\"c\n\"\"x\" text\n) DISTRIBUTED BY (id);\n"
+			stmts := []toc.StatementWithType{{Schema: "public", Name: "\"nl\ntab\"", ObjectType: toc.OBJ_TABLE,
+				Statement: createNl +
+					"\nALTER TABLE ONLY public.\"nl\ntab\" ALTER COLUMN id SET (pg_attver=12);" +
+					"\nALTER TABLE ONLY public.\"nl\ntab\" ALTER COLUMN \"c\n\"\"x\" SET STORAGE EXTERNAL;" +
+					"\nALTER TABLE ONLY public.\"nl\ntab\" ALTER COLUMN \"c\n\"\"x\" SET (pg_attver=12,n_distinct=2);"}}
+			removeAttributeVersionOptions(stmts)
+			Expect(stmts[0].Statement).To(Equal(createNl +
+				"\nALTER TABLE ONLY public.\"nl\ntab\" ALTER COLUMN \"c\n\"\"x\" SET STORAGE EXTERNAL;" +
+				"\nALTER TABLE ONLY public.\"nl\ntab\" ALTER COLUMN \"c\n\"\"x\" SET (n_distinct=2);"))
+		})
+		It("leaves statements without the option, and other object types, alone", func() {
+			stmts := []toc.StatementWithType{
+				{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,
+					Statement: create + "\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (n_distinct=1);"},
+				{Schema: "public", Name: "f", ObjectType: toc.OBJ_FUNCTION,
+					Statement: "\n\nCREATE FUNCTION public.f() RETURNS text AS $$\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (pg_attver=1);\n$$ LANGUAGE sql;\n"},
+				{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,
+					Statement: "\n\nCREATE TABLE public.foo (\n\tj text DEFAULT 'pg_attver=1'::text\n) DISTRIBUTED RANDOMLY;\n" +
+						"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (pg_attver=abc);"},
+				{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,
+					Statement: "\n\nCOMMENT ON COLUMN public.foo.j IS 'see\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (pg_attver=1);\n';\n"},
+				{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,
+					Statement: "\n\nCREATE TABLE public.foo (\n\tj text DEFAULT 'x\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (pg_attver=1);'::text\n) DISTRIBUTED RANDOMLY;\n" +
+						"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET STATISTICS 5;"},
+				{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,
+					Statement: "\n\nCREATE TABLE public.foo (\n\tj text DEFAULT 'x\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (pg_attver=1);\n'::text\n) DISTRIBUTED RANDOMLY;\n"},
+			}
+			original := make([]toc.StatementWithType, len(stmts))
+			copy(original, stmts)
+			removeAttributeVersionOptions(stmts)
+			for i := range stmts {
+				Expect(stmts[i]).To(Equal(original[i]))
+			}
+		})
+	})
 	Describe("filterExcludedExtensionStatements", func() {
 		extStatements := []toc.StatementWithType{
 			{Name: "pgfs", ObjectType: toc.OBJ_EXTENSION, Statement: "CREATE EXTENSION IF NOT EXISTS pgfs WITH SCHEMA public;\n"},

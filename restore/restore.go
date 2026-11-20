@@ -316,6 +316,7 @@ func restorePredata(metadataFilename string) {
 	statements := GetRestoreMetadataStatementsFiltered("predata", metadataFilename, []string{}, []string{toc.OBJ_SCHEMA}, filters)
 	statements = filterExcludedExtensionStatements(statements, opts.ExcludedExtensions)
 
+	removeAttributeVersionOptions(statements)
 	editStatementsRedirectSchema(statements, opts.RedirectSchema)
 	progressBar := utils.NewProgressBar(len(schemaStatements)+len(statements), "Pre-data objects restored: ", utils.PB_VERBOSE)
 	progressBar.Start()
@@ -444,6 +445,85 @@ func filterExcludedExtensionStatements(statements []toc.StatementWithType, exclu
 		filtered = append(filtered, statement)
 	}
 	return filtered
+}
+
+// The statements that gpbackup writes for a column after the CREATE TABLE
+// statement, without the leading "ALTER TABLE ONLY <table> ALTER COLUMN ". The
+// column name is a single identifier, which can be quoted and can then contain
+// anything, including line breaks. The options of a SET (...) are captured.
+const columnStatementTail = `(?:"(?:[^"]|"")*"|[^\s"]+) (?:SET \(([^()]*)\)|SET STATISTICS -?[0-9]+|SET STORAGE [A-Z]+|SET COMPRESSION [^\s;]+);`
+
+// This expression matches the internal attribute version option.
+var attributeVersionOptionRE = regexp.MustCompile(`^` + utils.AttributeVersionOption + `=[0-9]+$`)
+
+/*
+ * A backup taken by a gpbackup that did not know about the server's internal
+ * attribute version option contains it in the column options of every table.
+ * A server without attribute versioning rejects the option, and with it the
+ * whole table; a server with attribute versioning ignores it. Remove it from
+ * the column statements that follow a CREATE TABLE: a column statement that
+ * has no other option is dropped, otherwise the other options are kept.
+ *
+ * Text that only looks like such a statement must stay as it is. Comments,
+ * privileges and the like are separate statements of the same object type, so
+ * only a statement that creates the table is looked at. In it, a default
+ * expression can contain a string with line breaks, so the statement is read
+ * from its end, and only as long as it ends with a column statement of that
+ * table: gpbackup writes those last.
+ */
+func removeAttributeVersionOptions(statements []toc.StatementWithType) {
+	marker := utils.AttributeVersionOption + "="
+	for i := range statements {
+		if statements[i].ObjectType != toc.OBJ_TABLE && statements[i].ObjectType != toc.OBJ_FOREIGN_TABLE {
+			continue
+		}
+		if !strings.Contains(statements[i].Statement, marker) {
+			continue
+		}
+		if !strings.HasPrefix(strings.TrimLeft(statements[i].Statement, "\n"), "CREATE ") {
+			continue
+		}
+		table := utils.MakeFQN(statements[i].Schema, statements[i].Name)
+		lastColumnStatementRE := regexp.MustCompile(`\nALTER TABLE ONLY ` + regexp.QuoteMeta(table) + ` ALTER COLUMN ` + columnStatementTail + `\n*\z`)
+
+		rest := statements[i].Statement
+		kept := make([]string, 0)
+		changed := false
+		for {
+			loc := lastColumnStatementRE.FindStringSubmatchIndex(rest)
+			if loc == nil {
+				break
+			}
+			columnStatement := rest[loc[0]:]
+			if loc[2] >= 0 {
+				options := strings.Split(rest[loc[2]:loc[3]], ",")
+				userOptions := make([]string, 0, len(options))
+				for _, option := range options {
+					if !attributeVersionOptionRE.MatchString(option) {
+						userOptions = append(userOptions, option)
+					}
+				}
+				if len(userOptions) < len(options) {
+					changed = true
+					if len(userOptions) == 0 {
+						columnStatement = ""
+					} else {
+						columnStatement = rest[loc[0]:loc[2]] + strings.Join(userOptions, ",") + rest[loc[3]:]
+					}
+				}
+			}
+			kept = append(kept, columnStatement)
+			rest = rest[:loc[0]]
+		}
+		if !changed {
+			continue
+		}
+		// kept holds the column statements in reverse order
+		for k := len(kept) - 1; k >= 0; k-- {
+			rest += kept[k]
+		}
+		statements[i].Statement = rest
+	}
 }
 
 func editStatementsRedirectSchema(statements []toc.StatementWithType, redirectSchema string) {
