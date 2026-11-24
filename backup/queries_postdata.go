@@ -80,6 +80,12 @@ func (i IndexDefinition) FQN() string {
  * GetIndexes queries for all user and implicitly created indexes, since
  * implicitly created indexes could still have metadata to be backed up.
  * e.g. comments on implicitly created indexes
+ *
+ * An index is implicitly created when it belongs to a PRIMARY KEY, UNIQUE or
+ * EXCLUDE constraint. A FOREIGN KEY constraint also records an index in
+ * pg_constraint.conindid, the unique index of the referenced table that it
+ * relies on, but it does not create that index. Such an index may be a plain
+ * CREATE UNIQUE INDEX and must get its own statement in the backup.
  */
 func GetIndexes(connectionPool *dbconn.DBConn) []IndexDefinition {
 	implicitIndexStr := ""
@@ -132,7 +138,7 @@ func GetIndexes(connectionPool *dbconn.DBConn) []IndexDefinition {
 		JOIN pg_namespace n ON ic.relnamespace = n.oid
 		JOIN pg_class c ON c.oid = i.indrelid
 		LEFT JOIN pg_tablespace s ON ic.reltablespace = s.oid
-		LEFT JOIN pg_constraint con ON i.indexrelid = con.conindid
+		LEFT JOIN pg_constraint con ON i.indexrelid = con.conindid AND con.contype IN ('p', 'u', 'x')
 	WHERE %s
 		AND i.indisvalid
 		AND i.indisready
@@ -163,7 +169,7 @@ func GetIndexes(connectionPool *dbconn.DBConn) []IndexDefinition {
 			JOIN pg_namespace n ON ic.relnamespace = n.oid
 			JOIN pg_class c ON c.oid = i.indrelid
 			LEFT JOIN pg_tablespace s ON ic.reltablespace = s.oid
-			LEFT JOIN pg_constraint con ON i.indexrelid = con.conindid
+			LEFT JOIN pg_constraint con ON i.indexrelid = con.conindid AND con.contype IN ('p', 'u', 'x')
 			LEFT JOIN pg_catalog.pg_inherits inh ON inh.inhrelid = i.indexrelid
 		WHERE %s
 			AND i.indisready
