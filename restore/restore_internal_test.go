@@ -1,6 +1,8 @@
 package restore
 
 import (
+	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/greenplum-db/gpbackup/filepath"
@@ -186,6 +188,41 @@ var _ = Describe("restore internal tests", func() {
 				"\nALTER TABLE ONLY public.\"nl\ntab\" ALTER COLUMN \"c\n\"\"x\" SET STORAGE EXTERNAL;" +
 				"\nALTER TABLE ONLY public.\"nl\ntab\" ALTER COLUMN \"c\n\"\"x\" SET (n_distinct=2);"))
 		})
+		It("removes the option whatever its value is, as gpbackup does", func() {
+			stmts := []toc.StatementWithType{{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,
+				Statement: create +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN i SET (pg_attver=-123456);" +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (n_distinct=1,pg_attver=abc);"}}
+			removeAttributeVersionOptions(stmts)
+			Expect(stmts[0].Statement).To(Equal(create +
+				"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (n_distinct=1);"))
+		})
+		It("handles a column name that contains the start of a column statement", func() {
+			name := "\"q\nALTER TABLE ONLY public.foo ALTER COLUMN z\""
+			stmts := []toc.StatementWithType{{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,
+				Statement: create +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN i SET (pg_attver=3);" +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN " + name + " SET (pg_attver=3,n_distinct=2);" +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN " + name + " SET (pg_attver=3);"}}
+			removeAttributeVersionOptions(stmts)
+			Expect(stmts[0].Statement).To(Equal(create +
+				"\nALTER TABLE ONLY public.foo ALTER COLUMN " + name + " SET (n_distinct=2);"))
+		})
+		It("handles a table with many columns", func() {
+			var statement, expected strings.Builder
+			statement.WriteString(create)
+			expected.WriteString(create)
+			for c := 0; c < 1600; c++ {
+				fmt.Fprintf(&statement, "\nALTER TABLE ONLY public.foo ALTER COLUMN c%d SET (pg_attver=9);", c)
+				if c%400 == 0 {
+					fmt.Fprintf(&statement, "\nALTER TABLE ONLY public.foo ALTER COLUMN c%d SET STATISTICS 5;", c)
+					fmt.Fprintf(&expected, "\nALTER TABLE ONLY public.foo ALTER COLUMN c%d SET STATISTICS 5;", c)
+				}
+			}
+			stmts := []toc.StatementWithType{{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE, Statement: statement.String()}}
+			removeAttributeVersionOptions(stmts)
+			Expect(stmts[0].Statement).To(Equal(expected.String()))
+		})
 		It("leaves statements without the option, and other object types, alone", func() {
 			stmts := []toc.StatementWithType{
 				{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,
@@ -194,7 +231,7 @@ var _ = Describe("restore internal tests", func() {
 					Statement: "\n\nCREATE FUNCTION public.f() RETURNS text AS $$\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (pg_attver=1);\n$$ LANGUAGE sql;\n"},
 				{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,
 					Statement: "\n\nCREATE TABLE public.foo (\n\tj text DEFAULT 'pg_attver=1'::text\n) DISTRIBUTED RANDOMLY;\n" +
-						"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (pg_attver=abc);"},
+						"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (xpg_attver=1,pg_attverx=2);"},
 				{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,
 					Statement: "\n\nCOMMENT ON COLUMN public.foo.j IS 'see\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (pg_attver=1);\n';\n"},
 				{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,

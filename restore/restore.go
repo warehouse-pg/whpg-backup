@@ -447,14 +447,12 @@ func filterExcludedExtensionStatements(statements []toc.StatementWithType, exclu
 	return filtered
 }
 
-// The statements that gpbackup writes for a column after the CREATE TABLE
-// statement, without the leading "ALTER TABLE ONLY <table> ALTER COLUMN ". The
-// column name is a single identifier, which can be quoted and can then contain
-// anything, including line breaks. The options of a SET (...) are captured.
-const columnStatementTail = `(?:"(?:[^"]|"")*"|[^\s"]+) (?:SET \(([^()]*)\)|SET STATISTICS -?[0-9]+|SET STORAGE [A-Z]+|SET COMPRESSION [^\s;]+);`
-
-// This expression matches the internal attribute version option.
-var attributeVersionOptionRE = regexp.MustCompile(`^` + utils.AttributeVersionOption + `=[0-9]+$`)
+// A statement that gpbackup writes for a column after the CREATE TABLE
+// statement, without the leading "ALTER TABLE ONLY <table> ALTER COLUMN " and
+// up to the end of the CREATE TABLE entry. The column name is a single
+// identifier, which can be quoted and can then contain anything, including
+// line breaks. The options of a SET (...) are captured.
+var columnStatementTailRE = regexp.MustCompile(`\A(?:"(?:[^"]|"")*"|[^\s"]+) (?:SET \(([^()]*)\)|SET STATISTICS -?[0-9]+|SET STORAGE [A-Z]+|SET COMPRESSION [^\s;]+);\n*\z`)
 
 /*
  * A backup taken by a gpbackup that did not know about the server's internal
@@ -462,7 +460,9 @@ var attributeVersionOptionRE = regexp.MustCompile(`^` + utils.AttributeVersionOp
  * A server without attribute versioning rejects the option, and with it the
  * whole table; a server with attribute versioning ignores it. Remove it from
  * the column statements that follow a CREATE TABLE: a column statement that
- * has no other option is dropped, otherwise the other options are kept.
+ * has no other option is dropped, otherwise the other options are kept. As in
+ * gpbackup's query, the option is every entry that starts with its name and
+ * an equals sign, whatever the value.
  *
  * Text that only looks like such a statement must stay as it is. Comments,
  * privileges and the like are separate statements of the same object type, so
@@ -470,6 +470,11 @@ var attributeVersionOptionRE = regexp.MustCompile(`^` + utils.AttributeVersionOp
  * expression can contain a string with line breaks, so the statement is read
  * from its end, and only as long as it ends with a column statement of that
  * table: gpbackup writes those last.
+ *
+ * Every table of such a backup comes through here, and a table can have many
+ * columns, so the statement is cut at the last column statement and only that
+ * piece is matched: the work grows with the length of the statement, not with
+ * its length times the number of columns.
  */
 func removeAttributeVersionOptions(statements []toc.StatementWithType) {
 	marker := utils.AttributeVersionOption + "="
@@ -483,23 +488,41 @@ func removeAttributeVersionOptions(statements []toc.StatementWithType) {
 		if !strings.HasPrefix(strings.TrimLeft(statements[i].Statement, "\n"), "CREATE ") {
 			continue
 		}
-		table := utils.MakeFQN(statements[i].Schema, statements[i].Name)
-		lastColumnStatementRE := regexp.MustCompile(`\nALTER TABLE ONLY ` + regexp.QuoteMeta(table) + ` ALTER COLUMN ` + columnStatementTail + `\n*\z`)
+		columnStatementStart := "\nALTER TABLE ONLY " + utils.MakeFQN(statements[i].Schema, statements[i].Name) + " ALTER COLUMN "
 
 		rest := statements[i].Statement
 		kept := make([]string, 0)
 		changed := false
 		for {
-			loc := lastColumnStatementRE.FindStringSubmatchIndex(rest)
-			if loc == nil {
+			// The last column statement starts at the last occurrence of
+			// the prefix after which the text up to the end is one column
+			// statement. A quoted column name can contain the prefix too,
+			// so an occurrence that does not fit is skipped.
+			start := -1
+			var loc []int
+			for end := len(rest); ; {
+				candidate := strings.LastIndex(rest[:end], columnStatementStart)
+				if candidate < 0 {
+					break
+				}
+				loc = columnStatementTailRE.FindStringSubmatchIndex(rest[candidate+len(columnStatementStart):])
+				if loc != nil {
+					start = candidate
+					break
+				}
+				end = candidate
+			}
+			if start < 0 {
 				break
 			}
-			columnStatement := rest[loc[0]:]
+			tailStart := start + len(columnStatementStart)
+			columnStatement := rest[start:]
 			if loc[2] >= 0 {
-				options := strings.Split(rest[loc[2]:loc[3]], ",")
+				optionsStart, optionsEnd := tailStart+loc[2], tailStart+loc[3]
+				options := strings.Split(rest[optionsStart:optionsEnd], ",")
 				userOptions := make([]string, 0, len(options))
 				for _, option := range options {
-					if !attributeVersionOptionRE.MatchString(option) {
+					if !strings.HasPrefix(option, marker) {
 						userOptions = append(userOptions, option)
 					}
 				}
@@ -508,21 +531,23 @@ func removeAttributeVersionOptions(statements []toc.StatementWithType) {
 					if len(userOptions) == 0 {
 						columnStatement = ""
 					} else {
-						columnStatement = rest[loc[0]:loc[2]] + strings.Join(userOptions, ",") + rest[loc[3]:]
+						columnStatement = rest[start:optionsStart] + strings.Join(userOptions, ",") + rest[optionsEnd:]
 					}
 				}
 			}
 			kept = append(kept, columnStatement)
-			rest = rest[:loc[0]]
+			rest = rest[:start]
 		}
 		if !changed {
 			continue
 		}
 		// kept holds the column statements in reverse order
+		var result strings.Builder
+		result.WriteString(rest)
 		for k := len(kept) - 1; k >= 0; k-- {
-			rest += kept[k]
+			result.WriteString(kept[k])
 		}
-		statements[i].Statement = rest
+		statements[i].Statement = result.String()
 	}
 }
 
