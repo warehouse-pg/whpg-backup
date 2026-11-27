@@ -27,6 +27,13 @@ import (
 const MINIMUM_GPDB5_VERSION = "5.1.0"
 
 /*
+ * Name of the column option in which a server with attribute versioning keeps
+ * the version of an attribute. It is internal to the server: gpbackup does not
+ * back it up, and gprestore removes it from backups that contain it.
+ */
+const AttributeVersionOption = "pg_attver"
+
+/*
  * General helper functions
  */
 

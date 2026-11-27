@@ -316,6 +316,7 @@ func restorePredata(metadataFilename string) {
 	statements := GetRestoreMetadataStatementsFiltered("predata", metadataFilename, []string{}, []string{toc.OBJ_SCHEMA}, filters)
 	statements = filterExcludedExtensionStatements(statements, opts.ExcludedExtensions)
 
+	removeAttributeVersionOptions(statements)
 	editStatementsRedirectSchema(statements, opts.RedirectSchema)
 	progressBar := utils.NewProgressBar(len(schemaStatements)+len(statements), "Pre-data objects restored: ", utils.PB_VERBOSE)
 	progressBar.Start()
@@ -444,6 +445,110 @@ func filterExcludedExtensionStatements(statements []toc.StatementWithType, exclu
 		filtered = append(filtered, statement)
 	}
 	return filtered
+}
+
+// A statement that gpbackup writes for a column after the CREATE TABLE
+// statement, without the leading "ALTER TABLE ONLY <table> ALTER COLUMN " and
+// up to the end of the CREATE TABLE entry. The column name is a single
+// identifier, which can be quoted and can then contain anything, including
+// line breaks. The options of a SET (...) are captured.
+var columnStatementTailRE = regexp.MustCompile(`\A(?:"(?:[^"]|"")*"|[^\s"]+) (?:SET \(([^()]*)\)|SET STATISTICS -?[0-9]+|SET STORAGE [A-Z]+|SET COMPRESSION [^\s;]+);\n*\z`)
+
+/*
+ * A backup taken by a gpbackup that did not know about the server's internal
+ * attribute version option contains it in the column options of every table.
+ * A server without attribute versioning rejects the option, and with it the
+ * whole table; a server with attribute versioning ignores it. Remove it from
+ * the column statements that follow a CREATE TABLE: a column statement that
+ * has no other option is dropped, otherwise the other options are kept. As in
+ * gpbackup's query, the option is every entry that starts with its name and
+ * an equals sign, whatever the value.
+ *
+ * Text that only looks like such a statement must stay as it is. Comments,
+ * privileges and the like are separate statements of the same object type, so
+ * only a statement that creates the table is looked at. In it, a default
+ * expression can contain a string with line breaks, so the statement is read
+ * from its end, and only as long as it ends with a column statement of that
+ * table: gpbackup writes those last.
+ *
+ * Every table of such a backup comes through here, and a table can have many
+ * columns, so the statement is cut at the last column statement and only that
+ * piece is matched: the work grows with the length of the statement, not with
+ * its length times the number of columns.
+ */
+func removeAttributeVersionOptions(statements []toc.StatementWithType) {
+	marker := utils.AttributeVersionOption + "="
+	for i := range statements {
+		if statements[i].ObjectType != toc.OBJ_TABLE && statements[i].ObjectType != toc.OBJ_FOREIGN_TABLE {
+			continue
+		}
+		if !strings.Contains(statements[i].Statement, marker) {
+			continue
+		}
+		if !strings.HasPrefix(strings.TrimLeft(statements[i].Statement, "\n"), "CREATE ") {
+			continue
+		}
+		columnStatementStart := "\nALTER TABLE ONLY " + utils.MakeFQN(statements[i].Schema, statements[i].Name) + " ALTER COLUMN "
+
+		rest := statements[i].Statement
+		kept := make([]string, 0)
+		changed := false
+		for {
+			// The last column statement starts at the last occurrence of
+			// the prefix after which the text up to the end is one column
+			// statement. A quoted column name can contain the prefix too,
+			// so an occurrence that does not fit is skipped.
+			start := -1
+			var loc []int
+			for end := len(rest); ; {
+				candidate := strings.LastIndex(rest[:end], columnStatementStart)
+				if candidate < 0 {
+					break
+				}
+				loc = columnStatementTailRE.FindStringSubmatchIndex(rest[candidate+len(columnStatementStart):])
+				if loc != nil {
+					start = candidate
+					break
+				}
+				end = candidate
+			}
+			if start < 0 {
+				break
+			}
+			tailStart := start + len(columnStatementStart)
+			columnStatement := rest[start:]
+			if loc[2] >= 0 {
+				optionsStart, optionsEnd := tailStart+loc[2], tailStart+loc[3]
+				options := strings.Split(rest[optionsStart:optionsEnd], ",")
+				userOptions := make([]string, 0, len(options))
+				for _, option := range options {
+					if !strings.HasPrefix(option, marker) {
+						userOptions = append(userOptions, option)
+					}
+				}
+				if len(userOptions) < len(options) {
+					changed = true
+					if len(userOptions) == 0 {
+						columnStatement = ""
+					} else {
+						columnStatement = rest[start:optionsStart] + strings.Join(userOptions, ",") + rest[optionsEnd:]
+					}
+				}
+			}
+			kept = append(kept, columnStatement)
+			rest = rest[:start]
+		}
+		if !changed {
+			continue
+		}
+		// kept holds the column statements in reverse order
+		var result strings.Builder
+		result.WriteString(rest)
+		for k := len(kept) - 1; k >= 0; k-- {
+			result.WriteString(kept[k])
+		}
+		statements[i].Statement = result.String()
+	}
 }
 
 func editStatementsRedirectSchema(statements []toc.StatementWithType, redirectSchema string) {
