@@ -334,6 +334,47 @@ CREATE TABLE public.test_tsvector (
 
 			Expect(distPolicies[oid].Policy).To(Equal(`DISTRIBUTED BY (memo, dt, id, col1)`))
 		})
+		It("marks a table whose distribution key has an enum column, wherever that column is", func() {
+			testutils.SkipIfBefore6(connectionPool)
+			testhelper.AssertQueryRuns(connectionPool, "CREATE TYPE public.dist_enum AS ENUM ('a', 'b', 'c')")
+			defer testhelper.AssertQueryRuns(connectionPool, "DROP TYPE public.dist_enum")
+			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.dist_enum_only(e public.dist_enum, i int) DISTRIBUTED BY (e)")
+			defer testhelper.AssertQueryRuns(connectionPool, "DROP TABLE public.dist_enum_only")
+			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.dist_enum_first(e public.dist_enum, i int) DISTRIBUTED BY (e, i)")
+			defer testhelper.AssertQueryRuns(connectionPool, "DROP TABLE public.dist_enum_first")
+			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.dist_enum_last(i int, j int, e public.dist_enum) DISTRIBUTED BY (i, j, e)")
+			defer testhelper.AssertQueryRuns(connectionPool, "DROP TABLE public.dist_enum_last")
+			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.dist_no_enum(e public.dist_enum, i int, j int) DISTRIBUTED BY (i, j)")
+			defer testhelper.AssertQueryRuns(connectionPool, "DROP TABLE public.dist_no_enum")
+			// An operator class created after the enum type's sorts after it in
+			// pg_opclass, so that a query returning one row per key column
+			// returns the enum column's row first and this column's row last.
+			testhelper.AssertQueryRuns(connectionPool, `
+				CREATE OPERATOR FAMILY public.dist_int_hash_ops USING hash;
+				CREATE OPERATOR CLASS public.dist_int_hash_ops FOR TYPE integer USING hash FAMILY public.dist_int_hash_ops AS
+					OPERATOR 1 =(integer, integer), FUNCTION 1 hashint4(integer);`)
+			defer testhelper.AssertQueryRuns(connectionPool, `
+				DROP OPERATOR CLASS public.dist_int_hash_ops USING hash;
+				DROP OPERATOR FAMILY public.dist_int_hash_ops USING hash;`)
+			testhelper.AssertQueryRuns(connectionPool, "CREATE TABLE public.dist_enum_custom(e public.dist_enum, i int) DISTRIBUTED BY (e, i public.dist_int_hash_ops)")
+			defer testhelper.AssertQueryRuns(connectionPool, "DROP TABLE public.dist_enum_custom")
+			oids := make(map[string]uint32)
+			relations := make([]backup.Relation, 0)
+			for _, name := range []string{"dist_enum_only", "dist_enum_first", "dist_enum_last", "dist_enum_custom", "dist_no_enum"} {
+				oids[name] = testutils.OidFromObjectName(connectionPool, "public", name, backup.TYPE_RELATION)
+				relations = append(relations, backup.Relation{Oid: oids[name]})
+			}
+
+			distPolicies := backup.GetDistributionPolicies(connectionPool, relations)
+
+			Expect(distPolicies).To(HaveLen(5))
+			Expect(distPolicies[oids["dist_enum_only"]].DistByEnum).To(BeTrue())
+			Expect(distPolicies[oids["dist_enum_first"]].DistByEnum).To(BeTrue())
+			Expect(distPolicies[oids["dist_enum_last"]].DistByEnum).To(BeTrue())
+			Expect(distPolicies[oids["dist_enum_custom"]].DistByEnum).To(BeTrue())
+			Expect(distPolicies[oids["dist_no_enum"]].DistByEnum).To(BeFalse())
+			Expect(distPolicies[oids["dist_enum_last"]].Policy).To(Equal("DISTRIBUTED BY (i, j, e)"))
+		})
 		It("returns distribution policy info for a table DISTRIBUTED REPLICATED", func() {
 			testutils.SkipIfBefore6(connectionPool)
 			testhelper.AssertQueryRuns(connectionPool, `CREATE TABLE public.dist_one(a int, "group" text) DISTRIBUTED REPLICATED`)
