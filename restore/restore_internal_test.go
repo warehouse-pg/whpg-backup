@@ -223,6 +223,29 @@ var _ = Describe("restore internal tests", func() {
 			removeAttributeVersionOptions(stmts)
 			Expect(stmts[0].Statement).To(Equal(expected.String()))
 		})
+		It("reads past a column compression statement", func() {
+			stmts := []toc.StatementWithType{{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,
+				Statement: create +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN i SET (pg_attver=7);" +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (pg_attver=7,n_distinct=1);" +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET COMPRESSION lz4;"}}
+			removeAttributeVersionOptions(stmts)
+			Expect(stmts[0].Statement).To(Equal(create +
+				"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (n_distinct=1);" +
+				"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET COMPRESSION lz4;"))
+		})
+		It("keeps a subpartition template statement in front of the column statements", func() {
+			template := "ALTER TABLE public.foo \nSET SUBPARTITION TEMPLATE  \n          (\n          SUBPARTITION a VALUES(1), \n          SUBPARTITION b VALUES(2)\n          );\n"
+			stmts := []toc.StatementWithType{{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,
+				Statement: create + template +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN i SET (pg_attver=7);" +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET STATISTICS 5;" +
+					"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (pg_attver=7,n_distinct=1);"}}
+			removeAttributeVersionOptions(stmts)
+			Expect(stmts[0].Statement).To(Equal(create + template +
+				"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET STATISTICS 5;" +
+				"\nALTER TABLE ONLY public.foo ALTER COLUMN j SET (n_distinct=1);"))
+		})
 		It("leaves statements without the option, and other object types, alone", func() {
 			stmts := []toc.StatementWithType{
 				{Schema: "public", Name: "foo", ObjectType: toc.OBJ_TABLE,
